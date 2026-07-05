@@ -3,13 +3,16 @@ package com.example.habtrack
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -18,13 +21,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.graphics.toColorInt
 import com.example.habtrack.data.HabitEntity
 import com.example.habtrack.data.HabitDatabase
 import com.example.habtrack.data.HabitRepository
@@ -34,6 +42,8 @@ import com.example.habtrack.health.HealthMetric
 import com.example.habtrack.ui.HabitViewModel
 import com.example.habtrack.ui.AnalyticsScreen
 import com.example.habtrack.ui.SettingsScreen
+import com.example.habtrack.ui.theme.HabTrackTheme
+import com.example.habtrack.ui.theme.Obsidian
 import com.example.habtrack.workers.HabitResetScheduler
 import com.example.habtrack.notifications.HabitNotificationManager
 
@@ -49,7 +59,7 @@ class MainActivity : ComponentActivity() {
         HabitResetScheduler.scheduleHabitReset(this)
 
         setContent {
-            MaterialTheme {
+            HabTrackTheme {
                 // Initialize the repository and create ViewModel with factory
                 val database = HabitDatabase.getDatabase(this@MainActivity)
                 val repository = HabitRepository(database.habitDao(), database.dailyCompletionDao())
@@ -57,6 +67,62 @@ class MainActivity : ComponentActivity() {
                 HabTrackApp(viewModel = habitViewModel)
             }
         }
+    }
+}
+
+// ── Obsidian building blocks ───────────────────────────────────
+
+/** Tracked uppercase micro-label, e.g. "DAILY PROGRESS" */
+@Composable
+fun MicroLabel(text: String, color: Color = Obsidian.TextLow) {
+    Text(text.uppercase(), style = MaterialTheme.typography.labelSmall, color = color)
+}
+
+/** Progress ring drawn with Canvas — accent arc on a faint track. */
+@Composable
+fun ProgressRing(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    ringWidth: Float = 9f,
+    content: @Composable () -> Unit = {}
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = Stroke(width = ringWidth.dp.toPx(), cap = StrokeCap.Round)
+            val inset = ringWidth.dp.toPx() / 2
+            val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
+            drawArc(
+                color = Color.White.copy(alpha = 0.07f),
+                startAngle = 0f, sweepAngle = 360f, useCenter = false,
+                topLeft = Offset(inset, inset), size = arcSize, style = stroke
+            )
+            drawArc(
+                color = Obsidian.Accent,
+                startAngle = -90f, sweepAngle = 360f * progress.coerceIn(0f, 1f),
+                useCenter = false,
+                topLeft = Offset(inset, inset), size = arcSize, style = stroke
+            )
+        }
+        content()
+    }
+}
+
+/** Thin 4dp progress bar with rounded caps. */
+@Composable
+fun ThinProgressBar(progress: Float, modifier: Modifier = Modifier, dimmed: Boolean = false) {
+    Box(
+        modifier = modifier
+            .height(4.dp)
+            .clip(RoundedCornerShape(99.dp))
+            .background(Color.White.copy(alpha = 0.06f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(99.dp))
+                .background(if (dimmed) Obsidian.Accent.copy(alpha = 0.55f) else Obsidian.Accent)
+        )
     }
 }
 
@@ -77,9 +143,9 @@ fun ReminderSettingsSheet(
     }
     var metricMenuExpanded by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Obsidian.Surface2) {
         Column(modifier = Modifier.padding(24.dp).padding(bottom = 32.dp).fillMaxWidth()) {
-            Text("Reminder Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("Reminder settings", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Obsidian.TextHi)
             Spacer(modifier = Modifier.height(16.dp))
 
             // Toggle reminder
@@ -90,36 +156,40 @@ fun ReminderSettingsSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Enable Reminders", fontWeight = FontWeight.SemiBold)
+                Text("Enable reminders", fontWeight = FontWeight.SemiBold, color = Obsidian.TextHi)
                 Switch(
                     checked = reminderEnabled,
-                    onCheckedChange = { reminderEnabled = it }
+                    onCheckedChange = { reminderEnabled = it },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Obsidian.Accent,
+                        checkedThumbColor = Obsidian.Bg
+                    )
                 )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Time picker (simplified - using text input)
             OutlinedTextField(
                 value = reminderTime,
                 onValueChange = { reminderTime = it },
-                label = { Text("Reminder Time (HH:mm)") },
+                label = { Text("Reminder time (HH:mm)") },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("09:00") },
-                enabled = reminderEnabled
+                enabled = reminderEnabled,
+                shape = RoundedCornerShape(14.dp)
             )
 
             Spacer(modifier = Modifier.height(24.dp))
-            HorizontalDivider()
+            HorizontalDivider(color = Obsidian.StrokeSoft)
             Spacer(modifier = Modifier.height(16.dp))
 
-            Text("Auto-Sync from Health Connect", fontWeight = FontWeight.SemiBold)
+            MicroLabel("Auto-sync from Health Connect", color = Obsidian.Accent)
             Spacer(modifier = Modifier.height(4.dp))
             if (!healthConnectAvailable) {
                 Text(
                     "Connect Health Connect in Settings first.",
                     fontSize = 12.sp,
-                    color = Color.Gray
+                    color = Obsidian.TextLow
                 )
             }
 
@@ -130,11 +200,15 @@ fun ReminderSettingsSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Sync this habit automatically", fontWeight = FontWeight.SemiBold)
+                Text("Sync this habit automatically", fontWeight = FontWeight.SemiBold, color = Obsidian.TextHi)
                 Switch(
                     checked = autoSyncEnabled,
                     onCheckedChange = { autoSyncEnabled = it },
-                    enabled = healthConnectAvailable
+                    enabled = healthConnectAvailable,
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Obsidian.Accent,
+                        checkedThumbColor = Obsidian.Bg
+                    )
                 )
             }
 
@@ -150,7 +224,8 @@ fun ReminderSettingsSheet(
                         readOnly = true,
                         label = { Text("Metric") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = metricMenuExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
                     )
                     ExposedDropdownMenu(
                         expanded = metricMenuExpanded,
@@ -175,8 +250,10 @@ fun ReminderSettingsSheet(
                     onSave(reminderTime, reminderEnabled)
                     onSyncSave(autoSyncEnabled, if (autoSyncEnabled) selectedMetric else null)
                 },
-                modifier = Modifier.fillMaxWidth().height(56.dp)
-            ) { Text("Save") }
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Obsidian.Accent, contentColor = Obsidian.Bg)
+            ) { Text("SAVE", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
         }
     }
 }
@@ -192,15 +269,16 @@ fun AddHabitSheet(
     var unit by remember { mutableStateOf("") }
     var increment by remember { mutableStateOf("1") }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Obsidian.Surface2) {
         Column(modifier = Modifier.padding(24.dp).padding(bottom = 32.dp).fillMaxWidth()) {
-            Text("New Habit", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("New habit", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Obsidian.TextHi)
             Spacer(modifier = Modifier.height(16.dp))
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
                 label = { Text("Name") },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row {
@@ -209,14 +287,16 @@ fun AddHabitSheet(
                     onValueChange = { goal = it },
                     label = { Text("Goal") },
                     modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(14.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 OutlinedTextField(
                     value = unit,
                     onValueChange = { unit = it },
                     label = { Text("Unit") },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp)
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -226,20 +306,23 @@ fun AddHabitSheet(
                 label = { Text("Increment") },
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                supportingText = { Text("Amount added per click") }
+                supportingText = { Text("Amount added per click") },
+                shape = RoundedCornerShape(14.dp)
             )
             Spacer(modifier = Modifier.height(24.dp))
             Button(
-                onClick = { 
+                onClick = {
                     onSave(
-                        name, 
-                        goal.toFloatOrNull() ?: 1f, 
+                        name,
+                        goal.toFloatOrNull() ?: 1f,
                         unit,
                         increment.toFloatOrNull() ?: 1f
                     )
                 },
-                modifier = Modifier.fillMaxWidth().height(56.dp)
-            ) { Text("Save") }
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Obsidian.Accent, contentColor = Obsidian.Bg)
+            ) { Text("CREATE HABIT", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
         }
     }
 }
@@ -248,98 +331,91 @@ fun AddHabitSheet(
 @Composable
 fun HabitCard(habit: HabitEntity, onClick: () -> Unit, onLongClick: () -> Unit, onReminderClick: () -> Unit = {}) {
     val progress = (habit.currentValue / habit.goalValue).coerceIn(0f, 1f)
-    val themeColor = try {
-        Color(habit.colorHex.toColorInt())
-    } catch (_: Exception) {
-        Color(0xFF6366F1)
-    }
-    val habitIcon = when (habit.iconName) {
-        "favorite" -> Icons.Default.Favorite
-        "directions_run" -> Icons.Default.DirectionsRun
-        "bedtime" -> Icons.Default.Bedtime
-        "local_fire_department" -> Icons.Default.LocalFireDepartment
-        "self_improvement" -> Icons.Default.SelfImprovement
-        "fitness_center" -> Icons.Default.FitnessCenter
-        "directions_walk" -> Icons.Default.DirectionsWalk
-        else -> Icons.Default.Bolt
-    }
+    val monogram = habit.name.trim().take(2).uppercase()
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp)
+            .padding(vertical = 5.dp)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(20.dp),
-        color = Color.White,
-        shadowElevation = 3.dp
+        shape = RoundedCornerShape(18.dp),
+        color = Obsidian.Surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Obsidian.Stroke)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(contentAlignment = Alignment.TopEnd) {
-                        Box(
-                            modifier = Modifier
-                                .size(52.dp)
-                                .background(themeColor, RoundedCornerShape(14.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(habitIcon, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
-                        if (habit.currentStreak >= 2) {
-                            Box(
-                                modifier = Modifier
-                                    .offset(x = 6.dp, y = (-6).dp)
-                                    .size(18.dp)
-                                    .background(Color(0xFFFF6B00), RoundedCornerShape(9.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    habit.currentStreak.toString(),
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
-                    }
-                    Column(modifier = Modifier.padding(start = 12.dp)) {
-                        Text(habit.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("${habit.currentValue} / ${habit.goalValue} ${habit.unit}", fontSize = 12.sp, color = Color.Gray)
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onReminderClick, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            Icons.Default.Tune,
-                            contentDescription = "Habit settings",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(18.dp)
+                // Monogram chip (streak badge preserved)
+                Box(contentAlignment = Alignment.TopEnd) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(13.dp))
+                            .border(1.dp, Obsidian.Stroke, RoundedCornerShape(13.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            monogram,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            color = Obsidian.Accent
                         )
                     }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    if (progress >= 1f) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(28.dp))
-                    } else {
-                        Icon(Icons.Default.RadioButtonUnchecked, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(28.dp))
+                    if (habit.currentStreak >= 2) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = 6.dp, y = (-6).dp)
+                                .size(18.dp)
+                                .background(Obsidian.Accent, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                habit.currentStreak.toString(),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Obsidian.Bg
+                            )
+                        }
+                    }
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(habit.name, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = Obsidian.TextHi)
+                    Row {
+                        Text("${habit.currentValue}", fontSize = 12.sp, color = Obsidian.TextLow)
+                        Text(" / ${habit.goalValue} ${habit.unit}", fontSize = 12.sp, color = Obsidian.TextFaint)
+                    }
+                }
+
+                IconButton(onClick = onReminderClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Default.Tune,
+                        contentDescription = "Habit settings",
+                        tint = Obsidian.TextLow,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                if (progress >= 1f) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Obsidian.Accent, modifier = Modifier.size(24.dp))
+                } else {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            "${(progress * 100).toInt()}",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Obsidian.TextMid
+                        )
+                        Text("%", fontSize = 11.sp, color = Obsidian.TextLow)
                     }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp),
-                color = themeColor,
-                trackColor = themeColor.copy(alpha = 0.15f)
-            )
+            ThinProgressBar(progress = progress, modifier = Modifier.fillMaxWidth(), dimmed = progress < 0.5f)
         }
     }
 }
@@ -350,11 +426,11 @@ fun HabitLogBottomSheet(habit: HabitEntity, onDismiss: () -> Unit, onSave: (Floa
     var value by remember { mutableFloatStateOf(habit.currentValue) }
     var showDatePicker by remember { mutableStateOf(false) }
     var selectedDateMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    
+
     val dateFormat = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
     val selectedDateString = dateFormat.format(java.util.Date(selectedDateMillis))
-    
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Obsidian.Surface2) {
         Column(
             modifier = Modifier
                 .padding(24.dp)
@@ -362,34 +438,42 @@ fun HabitLogBottomSheet(habit: HabitEntity, onDismiss: () -> Unit, onSave: (Floa
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(habit.name, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(habit.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Obsidian.TextHi)
             Spacer(modifier = Modifier.height(16.dp))
 
             if (habit.autoSyncEnabled) {
-                // Health Connect is authoritative for this habit's progress - no manual entry.
-                Text(
-                    "This habit syncs automatically from Health Connect.",
-                    fontSize = 14.sp,
-                    color = Color.Gray
-                )
+                MicroLabel("Syncs automatically from Health Connect", color = Obsidian.Accent)
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    "${habit.currentValue} / ${habit.goalValue} ${habit.unit}",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Black
-                )
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        "${habit.currentValue}",
+                        fontSize = 40.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Obsidian.TextHi
+                    )
+                    Text(
+                        " / ${habit.goalValue} ${habit.unit}",
+                        fontSize = 15.sp,
+                        color = Obsidian.TextLow,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.height(24.dp))
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Obsidian.Accent, contentColor = Obsidian.Bg)
                 ) {
-                    Text("Close")
+                    Text("CLOSE", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             } else {
-                // Date selector
                 OutlinedButton(
                     onClick = { showDatePicker = true },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Obsidian.Stroke),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Obsidian.TextMid)
                 ) {
                     Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
@@ -407,31 +491,44 @@ fun HabitLogBottomSheet(habit: HabitEntity, onDismiss: () -> Unit, onSave: (Floa
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { value = (value - habit.incrementValue).coerceAtLeast(0f) }) {
-                        Icon(Icons.Default.Remove, null)
-                    }
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(15.dp))
+                            .border(1.dp, Obsidian.Stroke, RoundedCornerShape(15.dp))
+                            .clickable { value = (value - habit.incrementValue).coerceAtLeast(0f) },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Default.Remove, null, tint = Obsidian.TextMid) }
                     Text(
                         value.toString(),
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Black,
-                        modifier = Modifier.padding(horizontal = 24.dp)
+                        fontSize = 36.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Obsidian.TextHi,
+                        modifier = Modifier.padding(horizontal = 28.dp)
                     )
-                    IconButton(onClick = { value += habit.incrementValue }) {
-                        Icon(Icons.Default.Add, null)
-                    }
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .background(Obsidian.AccentDim, RoundedCornerShape(15.dp))
+                            .border(1.dp, Obsidian.AccentBorder, RoundedCornerShape(15.dp))
+                            .clickable { value += habit.incrementValue },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Default.Add, null, tint = Obsidian.Accent) }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "Increment: +${habit.incrementValue} ${habit.unit}",
                     fontSize = 12.sp,
-                    color = Color.Gray
+                    color = Obsidian.TextLow
                 )
                 Spacer(modifier = Modifier.height(24.dp))
                 Button(
                     onClick = { onSave(value, selectedDateMillis) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Obsidian.Accent, contentColor = Obsidian.Bg)
                 ) {
-                    Text("Update Progress")
+                    Text("UPDATE PROGRESS", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         }
@@ -455,10 +552,10 @@ fun DatePickerDialog(
             locale = java.util.Locale.getDefault()
         )
     }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select Date") },
+        title = { Text("Select date") },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 DatePicker(
@@ -483,6 +580,30 @@ fun DatePickerDialog(
             }
         }
     )
+}
+
+/** Pill-style tab (TODAY / ANALYTICS). */
+@Composable
+fun PillTab(text: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(99.dp))
+            .background(if (selected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
+            .border(
+                1.dp,
+                if (selected) Color.White.copy(alpha = 0.1f) else Obsidian.StrokeSoft,
+                RoundedCornerShape(99.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 9.dp)
+    ) {
+        Text(
+            text.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 11.sp,
+            color = if (selected) Obsidian.TextHi else Obsidian.TextLow
+        )
+    }
 }
 
 @Composable
@@ -516,58 +637,48 @@ fun HabTrackApp(viewModel: HabitViewModel) {
         return
     }
 
-    // Get current day name
-    val dayName = java.text.SimpleDateFormat("EEEE, MMM d, yyyy", java.util.Locale.getDefault()).format(java.util.Date())
+    // "SUNDAY · JUL 5" style date label
+    val dayLabel = java.text.SimpleDateFormat("EEEE · MMM d", java.util.Locale.getDefault())
+        .format(java.util.Date()).uppercase()
 
     Scaffold(
+        containerColor = Obsidian.Bg,
         topBar = {
-            Column(modifier = Modifier.background(Color(0xFFF8FAFC)).padding(horizontal = 16.dp, vertical = 16.dp)) {
+            Column(modifier = Modifier.background(Obsidian.Bg).padding(horizontal = 20.dp, vertical = 16.dp)) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Column {
-                        Text("HabTrack", fontSize = 32.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
-                        Text(dayName, fontSize = 12.sp, color = Color.Gray)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        MicroLabel(dayLabel)
+                        Text(
+                            "today",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = Obsidian.TextHi
+                        )
                     }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color(0xFF64748B))
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(Obsidian.Surface, RoundedCornerShape(12.dp))
+                            .border(1.dp, Obsidian.Stroke, RoundedCornerShape(12.dp))
+                            .clickable { showSettings = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = Obsidian.TextMid,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                TabRow(
-                    selectedTabIndex = selectedTabIndex,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(40.dp),
-                    containerColor = Color.Transparent,
-                    contentColor = Color(0xFF4F46E5),
-                    divider = {}
-                ) {
-                    Tab(
-                        selected = selectedTabIndex == 0,
-                        onClick = { selectedTabIndex = 0 },
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        text = { 
-                            Text("Today", 
-                                fontWeight = if (selectedTabIndex == 0) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 14.sp
-                            ) 
-                        }
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 1,
-                        onClick = { selectedTabIndex = 1 },
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        text = { 
-                            Text("Analytics", 
-                                fontWeight = if (selectedTabIndex == 1) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 14.sp
-                            ) 
-                        }
-                    )
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillTab("Today", selectedTabIndex == 0) { selectedTabIndex = 0 }
+                    PillTab("Analytics", selectedTabIndex == 1) { selectedTabIndex = 1 }
                 }
             }
         },
@@ -575,10 +686,10 @@ fun HabTrackApp(viewModel: HabitViewModel) {
             if (selectedTabIndex == 0) {
                 FloatingActionButton(
                     onClick = { showAdd = true },
-                    containerColor = Color(0xFF6366F1),
-                    contentColor = Color.White,
+                    containerColor = Obsidian.Accent,
+                    contentColor = Obsidian.Bg,
                     modifier = Modifier.padding(16.dp),
-                    shape = RoundedCornerShape(20.dp)
+                    shape = RoundedCornerShape(18.dp)
                 ) {
                     Icon(Icons.Default.Add, null, modifier = Modifier.size(28.dp))
                 }
@@ -592,85 +703,109 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                     modifier = Modifier
                         .padding(p)
                         .fillMaxSize()
-                        .background(Color(0xFFF8FAFC))
-                        .padding(horizontal = 16.dp)
+                        .background(Obsidian.Bg)
+                        .padding(horizontal = 20.dp)
                 ) {
                     item {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        // Daily Progress Card
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // ── Hero: daily progress ring + streak ──
+                        val bestStreak = habits.maxOfOrNull { it.currentStreak } ?: 0
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(24.dp))
                                 .background(
-                                    brush = Brush.linearGradient(
-                                        listOf(Color(0xFF6366F1), Color(0xFF7C3AED))
-                                    ),
-                                    shape = RoundedCornerShape(28.dp)
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF14181E), Color(0xFF0F1216))
+                                    )
                                 )
-                                .padding(24.dp)
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(Obsidian.Accent.copy(alpha = 0.14f), Color.Transparent),
+                                        center = Offset(0.15f, 0f), radius = 900f
+                                    )
+                                )
+                                .border(1.dp, Obsidian.AccentBorder, RoundedCornerShape(24.dp))
+                                .padding(22.dp)
                         ) {
-                            Column {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(22.dp)
+                            ) {
+                                ProgressRing(
+                                    progress = averageProgress / 100f,
+                                    modifier = Modifier.size(118.dp)
                                 ) {
-                                    Column {
-                                        Text(
-                                            "DAILY PROGRESS",
-                                            color = Color.White.copy(alpha = 0.8f),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(
                                             "${averageProgress.toInt()}%",
-                                            color = Color.White,
-                                            fontSize = 54.sp,
-                                            fontWeight = FontWeight.Black
+                                            fontSize = 27.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Obsidian.TextHi
                                         )
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(56.dp)
-                                            .background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("🔥", fontSize = 32.sp)
+                                        MicroLabel("done")
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(16.dp))
-                                LinearProgressIndicator(
-                                    progress = { averageProgress / 100f },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(8.dp),
-                                    color = Color.White,
-                                    trackColor = Color.White.copy(alpha = 0.2f)
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                val completedCount = habits.count { it.currentValue >= it.goalValue }
-                                val remaining = habits.size - completedCount
-                                val quoteText = when {
-                                    habits.isEmpty() -> "Add habits to get started"
-                                    remaining == 0 -> "All habits complete! Great work today."
-                                    remaining == 1 -> "1 habit left — finish strong!"
-                                    else -> "$remaining habits left today"
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    MicroLabel("Daily progress")
+                                    val completedCount = habits.count { it.currentValue >= it.goalValue }
+                                    val remaining = habits.size - completedCount
+                                    val statusText = when {
+                                        habits.isEmpty() -> "Add habits to get started"
+                                        remaining == 0 -> "All habits complete — great work"
+                                        else -> "$completedCount of ${habits.size} habits on track"
+                                    }
+                                    Text(statusText, fontSize = 15.sp, color = Obsidian.TextMid, lineHeight = 21.sp)
+                                    if (bestStreak >= 2) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(99.dp))
+                                                .background(Color.White.copy(alpha = 0.05f))
+                                                .border(1.dp, Obsidian.Stroke, RoundedCornerShape(99.dp))
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(7.dp)
+                                                    .rotate(45f)
+                                                    .background(Obsidian.Accent)
+                                            )
+                                            Text(
+                                                "$bestStreak-DAY STREAK",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 10.5.sp,
+                                                color = Obsidian.TextMid
+                                            )
+                                        }
+                                    }
                                 }
-                                Text(
-                                    quoteText,
-                                    color = Color.White.copy(alpha = 0.9f),
-                                    fontSize = 12.sp,
-                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                                )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(28.dp))
-                        Text("Active Habits", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color(0xFF0F172A))
-                        Spacer(modifier = Modifier.height(12.dp))
+                        // ── Health Connect sync status ──
+                        if (healthConnectAvailable) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(top = 14.dp, start = 4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(Obsidian.Accent, CircleShape)
+                                )
+                                MicroLabel("Health Connect · Synced")
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(22.dp))
+                        MicroLabel("Active habits")
+                        Spacer(modifier = Modifier.height(7.dp))
                     }
-                    
+
                     items(habits) { habit ->
                         HabitCard(
                             habit = habit,
@@ -679,7 +814,7 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                             onReminderClick = { habitForReminder = habit }
                         )
                     }
-                    
+
                     item {
                         Spacer(modifier = Modifier.height(24.dp))
                     }
@@ -696,7 +831,7 @@ fun HabTrackApp(viewModel: HabitViewModel) {
         AddHabitSheet(
             onDismiss = { showAdd = false },
             onSave = { n, g, u, inc ->
-                viewModel.addNewHabit(n, g, u, "#4F46E5", inc)
+                viewModel.addNewHabit(n, g, u, "#57E6C6", inc)
                 showAdd = false
             }
         )
@@ -716,14 +851,14 @@ fun HabTrackApp(viewModel: HabitViewModel) {
     habitToDelete?.let { h ->
         AlertDialog(
             onDismissRequest = { habitToDelete = null },
-            title = { Text("Delete Habit") },
+            title = { Text("Delete habit") },
             text = { Text("Delete '${h.name}'?") },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteHabit(h)
                     habitToDelete = null
                 }) {
-                    Text("Delete", color = Color.Red)
+                    Text("Delete", color = Color(0xFFF2B5B5))
                 }
             },
             dismissButton = {

@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -34,6 +35,7 @@ import androidx.health.connect.client.PermissionController
 import com.example.habtrack.data.ApiKeyStore
 import com.example.habtrack.health.HealthConnectAvailability
 import com.example.habtrack.health.HealthConnectManager
+import com.example.habtrack.ui.theme.Obsidian
 
 /**
  * Lets the user paste their own Anthropic API key, stored encrypted on-device.
@@ -75,14 +77,19 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
 
     Scaffold(
+        containerColor = Obsidian.Bg,
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text("settings", style = MaterialTheme.typography.headlineMedium, color = Obsidian.TextHi) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Obsidian.TextMid)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Obsidian.Bg,
+                    titleContentColor = Obsidian.TextHi
+                )
             )
         }
     ) { padding ->
@@ -90,21 +97,18 @@ fun SettingsScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .background(Color(0xFFF8FAFC))
+                .background(Obsidian.Bg)
                 .verticalScroll(rememberScrollState())
                 .padding(20.dp)
         ) {
-            Text(
-                "Anthropic API Key",
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
+            SectionLabel("Anthropic API key")
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 "Needed for the AI Insights feature on the Analytics tab. " +
                     "Your key is stored encrypted on this device only and is never sent anywhere except directly to Anthropic.",
                 fontSize = 13.sp,
-                color = Color.Gray
+                lineHeight = 19.sp,
+                color = Obsidian.TextLow
             )
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -114,17 +118,19 @@ fun SettingsScreen(onBack: () -> Unit) {
                     apiKey = it
                     savedMessage = null
                 },
-                label = { Text("API Key") },
+                label = { Text("API key") },
                 placeholder = { Text("sk-ant-...") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { keyVisible = !keyVisible }) {
                         Icon(
                             if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (keyVisible) "Hide key" else "Show key"
+                            contentDescription = if (keyVisible) "Hide key" else "Show key",
+                            tint = Obsidian.TextLow
                         )
                     }
                 }
@@ -140,9 +146,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     },
                     enabled = apiKey.isNotBlank(),
                     modifier = Modifier.weight(1f).height(50.dp),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Obsidian.Accent,
+                        contentColor = Obsidian.Bg,
+                        disabledContainerColor = Color.White.copy(alpha = 0.06f),
+                        disabledContentColor = Obsidian.TextLow
+                    )
                 ) {
-                    Text("Save")
+                    Text("SAVE", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
                 OutlinedButton(
                     onClick = {
@@ -151,32 +163,34 @@ fun SettingsScreen(onBack: () -> Unit) {
                         savedMessage = "API key removed."
                     },
                     modifier = Modifier.weight(1f).height(50.dp),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Obsidian.Stroke),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Obsidian.TextMid)
                 ) {
-                    Text("Clear")
+                    Text("CLEAR", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
             }
 
             savedMessage?.let {
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(it, color = Color(0xFF10B981), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(it, color = Obsidian.Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
 
             Spacer(modifier = Modifier.height(32.dp))
-            HorizontalDivider()
+            HorizontalDivider(color = Obsidian.StrokeSoft)
             Spacer(modifier = Modifier.height(20.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Health Connect", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                SectionLabel("Health Connect")
                 val dotColor = when (hcAvailability) {
-                    is HealthConnectAvailability.Available -> if (hcPermissionsGranted) Color(0xFF10B981) else Color(0xFFF59E0B)
-                    is HealthConnectAvailability.NotInstalled, is HealthConnectAvailability.UpdateRequired -> Color(0xFFDC2626)
-                    null -> Color(0xFF94A3B8)
+                    is HealthConnectAvailability.Available -> if (hcPermissionsGranted) Obsidian.Accent else Color(0xFFF2B558)
+                    is HealthConnectAvailability.NotInstalled, is HealthConnectAvailability.UpdateRequired -> Color(0xFFF2B5B5)
+                    null -> Obsidian.TextLow
                 }
                 Box(
                     modifier = Modifier
-                        .size(10.dp)
-                        .background(dotColor, RoundedCornerShape(5.dp))
+                        .size(8.dp)
+                        .background(dotColor, CircleShape)
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -184,19 +198,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                 "Lets HabTrack auto-sync steps, active calories, and distance into any habit " +
                     "you opt in via that habit's settings.",
                 fontSize = 13.sp,
-                color = Color.Gray
+                lineHeight = 19.sp,
+                color = Obsidian.TextLow
             )
             Spacer(modifier = Modifier.height(16.dp))
 
             when (val availability = hcAvailability) {
                 null -> {
-                    Text("Checking availability...", fontSize = 13.sp, color = Color.Gray)
+                    Text("Checking availability...", fontSize = 13.sp, color = Obsidian.TextLow)
                 }
                 is HealthConnectAvailability.NotInstalled -> {
                     Text(
                         "Health Connect is not installed on this device.",
                         fontSize = 13.sp,
-                        color = Color(0xFFDC2626)
+                        color = Color(0xFFF2B5B5)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
@@ -211,30 +226,32 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 .onFailure { context.startActivity(webIntent) }
                         },
                         modifier = Modifier.fillMaxWidth().height(50.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Obsidian.Accent, contentColor = Obsidian.Bg)
                     ) {
-                        Text("Install from Play Store")
+                        Text("INSTALL FROM PLAY STORE", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
                 is HealthConnectAvailability.UpdateRequired -> {
                     Text(
                         "Health Connect needs to be updated before it can be used.",
                         fontSize = 13.sp,
-                        color = Color(0xFFDC2626)
+                        color = Color(0xFFF2B5B5)
                     )
                 }
                 is HealthConnectAvailability.Available -> {
                     if (hcPermissionsGranted) {
-                        Text("Connected", color = Color(0xFF10B981), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Connected", color = Obsidian.Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     } else {
-                        Text("Not connected yet.", fontSize = 13.sp, color = Color.Gray)
+                        Text("Not connected yet.", fontSize = 13.sp, color = Obsidian.TextLow)
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = { permissionLauncher.launch(healthConnectManager.getRequiredPermissions()) },
                             modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Obsidian.Accent, contentColor = Obsidian.Bg)
                         ) {
-                            Text("Connect Health Connect")
+                            Text("CONNECT HEALTH CONNECT", letterSpacing = 2.sp, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                         }
                     }
                 }

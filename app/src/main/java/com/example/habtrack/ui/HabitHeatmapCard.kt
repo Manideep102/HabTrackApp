@@ -1,20 +1,19 @@
 package com.example.habtrack.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.habtrack.ui.theme.Obsidian
 import com.example.habtrack.utils.HabitHeatmapCalculator
 
 @Composable
@@ -22,21 +21,13 @@ fun HeatmapCell(
     cell: HabitHeatmapCalculator.HeatmapCell,
     modifier: Modifier = Modifier
 ) {
-    val intensity = HabitHeatmapCalculator.getIntensityLevel(
-        if (cell.isCompleted) 75f else 0f
-    )
-    val colorHex = HabitHeatmapCalculator.getHeatmapColor(cell.isCompleted, intensity)
-    
-    val color = try {
-        Color(android.graphics.Color.parseColor(colorHex))
-    } catch (e: Exception) {
-        Color.LightGray
-    }
+    // Obsidian: completed = accent, empty = faint white
+    val color = if (cell.isCompleted) Obsidian.Accent else Color.White.copy(alpha = 0.06f)
 
     Box(
         modifier = modifier
             .size(14.dp)
-            .background(color, RoundedCornerShape(2.dp))
+            .background(color, RoundedCornerShape(4.dp))
     )
 }
 
@@ -46,7 +37,7 @@ fun HabitHeatmap(heatmapData: List<HabitHeatmapCalculator.HeatmapCell>) {
         Text(
             text = "No completion data available",
             fontSize = 14.sp,
-            color = Color.Gray,
+            color = Obsidian.TextLow,
             modifier = Modifier.padding(16.dp)
         )
         return
@@ -67,16 +58,16 @@ fun HabitHeatmap(heatmapData: List<HabitHeatmapCalculator.HeatmapCell>) {
             Text(
                 text = "S",
                 fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.Gray,
+                fontWeight = FontWeight.Medium,
+                color = Obsidian.TextLow,
                 modifier = Modifier.width(20.dp)
             )
             for (i in 1..6) {
                 Text(
                     text = HabitHeatmapCalculator.getDayOfWeekAbbr(i),
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Gray,
+                    fontWeight = FontWeight.Medium,
+                    color = Obsidian.TextLow,
                     modifier = Modifier
                         .width(20.dp)
                         .padding(horizontal = 2.dp)
@@ -114,131 +105,113 @@ fun HabitHeatmapCard(
     longestStreak: Int,
     completionPercentage: Float
 ) {
-    Card(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
+            .padding(vertical = 5.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Obsidian.Surface)
+            .border(1.dp, Obsidian.Stroke, RoundedCornerShape(18.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        // Header with habit name
+        Text(
+            text = habitName,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = Obsidian.TextHi
+        )
+
+        // Stats row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Header with habit name
-            Text(
-                text = habitName,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.Black
+            StatBox(
+                label = "Streak",
+                value = "$currentStreak d",
+                modifier = Modifier.weight(1f)
             )
+            StatBox(
+                label = "Longest",
+                value = "$longestStreak d",
+                modifier = Modifier.weight(1f)
+            )
+            StatBox(
+                label = "Completion",
+                value = "${"%.0f".format(completionPercentage)}%",
+                modifier = Modifier.weight(1f)
+            )
+        }
 
-            // Stats row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                StatBox(
-                    label = "Current Streak",
-                    value = "$currentStreak days",
-                    modifier = Modifier.weight(1f)
-                )
-                StatBox(
-                    label = "Longest Streak",
-                    value = "$longestStreak days",
-                    modifier = Modifier.weight(1f)
-                )
-                StatBox(
-                    label = "Completion",
-                    value = "${"%.0f".format(completionPercentage)}%",
-                    modifier = Modifier.weight(1f)
+        // Heatmap grid
+        HabitHeatmap(heatmapData)
+
+        // Legend
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Less", fontSize = 10.sp, color = Obsidian.TextLow)
+
+            listOf(0.06f, 0.25f, 0.5f, 0.75f, 1f).forEach { alpha ->
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(
+                            if (alpha <= 0.06f) Color.White.copy(alpha = 0.06f)
+                            else Obsidian.Accent.copy(alpha = alpha),
+                            RoundedCornerShape(3.dp)
+                        )
                 )
             }
 
-            // Heatmap grid
-            HabitHeatmap(heatmapData)
-
-            // Legend
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Less", fontSize = 10.sp, color = Color.Gray)
-                
-                listOf("#F0F0F0", "#C6E48B", "#7BC96F", "#239A3B", "#196127").forEach { colorHex ->
-                    val color = try {
-                        Color(android.graphics.Color.parseColor(colorHex))
-                    } catch (e: Exception) {
-                        Color.LightGray
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .background(color, RoundedCornerShape(1.dp))
-                    )
-                }
-                
-                Text("More", fontSize = 10.sp, color = Color.Gray)
-            }
+            Text("More", fontSize = 10.sp, color = Obsidian.TextLow)
         }
     }
 }
 
 @Composable
 fun StatBox(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(
+    Column(
         modifier = modifier
-            .padding(0.dp),
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(alpha = 0.04f))
+            .padding(vertical = 10.dp, horizontal = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = label,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.Gray
-            )
-            Text(
-                text = value,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.Black
-            )
-        }
+        Text(
+            text = value,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = Obsidian.TextHi
+        )
+        Text(
+            text = label.uppercase(),
+            fontSize = 8.5.sp,
+            letterSpacing = 1.sp,
+            fontWeight = FontWeight.Medium,
+            color = Obsidian.TextLow
+        )
     }
 }
 
 @Composable
 fun HeatmapGrid(heatmapList: List<Pair<String, HabitHeatmapData>>) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            text = "🔥 Completion Heatmap",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.Black,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-        )
+        SectionLabel("Completion heatmap")
 
         if (heatmapList.isEmpty()) {
             Text(
                 text = "No habits tracked yet",
                 fontSize = 14.sp,
-                color = Color.Gray,
+                color = Obsidian.TextLow,
                 modifier = Modifier.padding(16.dp)
             )
         } else {
