@@ -184,45 +184,33 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     // 11. Analytics: Monthly completions data for calendar view
-    val monthlyCompletionsData: StateFlow<Map<Int, Pair<List<Pair<Int, Boolean>>, List<Pair<Int, Float>>>>> = habitListState
-        .map { habits ->
-            habits.associate { habit ->
-                val completedDays = mutableListOf<Pair<Int, Boolean>>()
-                val progressDays = mutableListOf<Pair<Int, Float>>()
-                
-                val today = java.time.LocalDate.now()
-                val currentMonth = java.time.YearMonth.now()
-                val daysInMonth = currentMonth.lengthOfMonth()
-                
-                // Get start and end of current month
-                val startOfMonth = java.time.LocalDate.of(currentMonth.year, currentMonth.month, 1)
-                val endOfMonth = java.time.LocalDate.of(currentMonth.year, currentMonth.month, daysInMonth)
-                
-                val startMillis = startOfMonth.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                val endMillis = endOfMonth.atTime(23, 59, 59).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                
-                // For each day in the month, check if we have data
-                for (day in 1..daysInMonth) {
-                    val currentDate = java.time.LocalDate.of(currentMonth.year, currentMonth.month, day)
-                    
-                    // Only show data for today and past dates
-                    if (currentDate.isAfter(today)) {
-                        // Future dates - grayed out
-                        completedDays.add(day to false)
-                        progressDays.add(day to 0f)
-                    } else {
-                        // Placeholder data pattern for now (will be replaced with real DB data)
-                        val isCompleted = (day % 3 != 0) && day <= today.dayOfMonth
-                        val progress = when {
-                            day % 3 == 0 && day <= today.dayOfMonth -> 0.5f
-                            day % 2 == 0 && day <= today.dayOfMonth -> 1f
-                            else -> 0f
-                        }
-                        completedDays.add(day to isCompleted)
-                        progressDays.add(day to progress)
-                    }
+    val monthlyCompletionsData: StateFlow<Map<Int, Pair<List<Pair<Int, Boolean>>, List<Pair<Int, Float>>>>> =
+        combine(habitListState, repository.getRecentCompletions()) { habits, completions ->
+            val zone = java.time.ZoneId.systemDefault()
+            val currentMonth = java.time.YearMonth.now()
+
+            // Latest record per habit per day of the current month; a day can have
+            // several rows because every progress update inserts a new one
+            val latestByHabitAndDay = completions
+                .filter {
+                    java.time.YearMonth.from(
+                        java.time.Instant.ofEpochMilli(it.dateTime).atZone(zone).toLocalDate()
+                    ) == currentMonth
                 }
-                
+                .groupBy { it.habitId }
+                .mapValues { (_, rows) ->
+                    rows
+                        .groupBy { java.time.Instant.ofEpochMilli(it.dateTime).atZone(zone).toLocalDate().dayOfMonth }
+                        .mapValues { (_, dayRows) -> dayRows.maxBy { it.timestamp } }
+                }
+
+            habits.associate { habit ->
+                val byDay = latestByHabitAndDay[habit.id].orEmpty()
+                val completedDays = byDay.map { (day, row) -> day to row.isCompleted }
+                val progressDays = byDay.map { (day, row) ->
+                    val fraction = if (habit.goalValue > 0f) row.progressValue / habit.goalValue else 0f
+                    day to fraction.coerceIn(0f, 1f)
+                }
                 habit.id to (completedDays to progressDays)
             }
         }

@@ -41,6 +41,7 @@ import com.example.habtrack.health.HealthConnectAvailability
 import com.example.habtrack.health.HealthConnectManager
 import com.example.habtrack.ui.theme.Obsidian
 import com.example.habtrack.ui.theme.ThemeStore
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Lets the user paste their own Anthropic API key, stored encrypted on-device.
@@ -76,7 +77,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                     hcPermissionsGranted = healthConnectManager.hasAllPermissions(client)
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
             hcAvailability = HealthConnectAvailability.NotInstalled
         }
     }

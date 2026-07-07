@@ -2,6 +2,7 @@ package com.example.habtrack
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
@@ -551,8 +552,6 @@ fun DatePickerDialog(
     onDismiss: () -> Unit
 ) {
     val datePickerState = remember {
-        val cal = java.util.Calendar.getInstance()
-        cal.timeInMillis = selectedDateMillis
         DatePickerState(
             yearRange = 2020..2030,
             initialSelectedDateMillis = selectedDateMillis,
@@ -561,17 +560,9 @@ fun DatePickerDialog(
         )
     }
 
-    AlertDialog(
+    // M3's own dialog container — a plain AlertDialog clips DatePicker's fixed 360dp grid
+    androidx.compose.material3.DatePickerDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select date") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                DatePicker(
-                    state = datePickerState,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
         confirmButton = {
             TextButton(
                 onClick = {
@@ -587,7 +578,9 @@ fun DatePickerDialog(
                 Text("Cancel")
             }
         }
-    )
+    ) {
+        DatePicker(state = datePickerState, showModeToggle = false)
+    }
 }
 
 /** Pill-style tab (TODAY / ANALYTICS). */
@@ -651,6 +644,17 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                 viewModel.syncFromHealthConnect(context)
                 pendingAutoSync = null
             }
+        }
+    }
+
+    // System back mirrors the on-screen back arrows; disabled on the Today
+    // tab with nothing open so back still exits the app there
+    BackHandler(enabled = showSettings || showAdd || detailHabit != null || selectedTabIndex != 0) {
+        when {
+            showSettings -> showSettings = false
+            showAdd -> showAdd = false
+            detailHabit != null -> detailHabit = null
+            else -> selectedTabIndex = 0
         }
     }
 

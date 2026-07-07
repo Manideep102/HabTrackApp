@@ -11,13 +11,33 @@ import androidx.security.crypto.MasterKey
  */
 class ApiKeyStore(context: Context) {
 
-    private val prefs: SharedPreferences by lazy {
-        val masterKey = MasterKey.Builder(context)
+    private val appContext = context.applicationContext
+
+    // Nullable: the Tink keyset backing EncryptedSharedPreferences can become
+    // unreadable (emulator snapshot restore, device backup/restore, keystore
+    // drift), which throws on create(). Losing the stored key and letting the
+    // user re-enter it beats crashing Settings forever, so we wipe the corrupt
+    // prefs file and retry once; null means even that failed.
+    private val prefs: SharedPreferences? by lazy {
+        try {
+            createPrefs()
+        } catch (_: Throwable) {
+            try {
+                appContext.deleteSharedPreferences(PREFS_FILE)
+                createPrefs()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
+    private fun createPrefs(): SharedPreferences {
+        val masterKey = MasterKey.Builder(appContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
 
-        EncryptedSharedPreferences.create(
-            context,
+        return EncryptedSharedPreferences.create(
+            appContext,
             PREFS_FILE,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
@@ -25,14 +45,26 @@ class ApiKeyStore(context: Context) {
         )
     }
 
-    fun getApiKey(): String? = prefs.getString(KEY_API_KEY, null)?.takeIf { it.isNotBlank() }
+    // Individual values can still fail to decrypt even when the keyset loaded,
+    // so reads/writes are guarded too; a lost key is always re-enterable.
+    fun getApiKey(): String? = try {
+        prefs?.getString(KEY_API_KEY, null)?.takeIf { it.isNotBlank() }
+    } catch (_: Throwable) {
+        null
+    }
 
     fun saveApiKey(apiKey: String) {
-        prefs.edit().putString(KEY_API_KEY, apiKey.trim()).apply()
+        try {
+            prefs?.edit()?.putString(KEY_API_KEY, apiKey.trim())?.apply()
+        } catch (_: Throwable) {
+        }
     }
 
     fun clearApiKey() {
-        prefs.edit().remove(KEY_API_KEY).apply()
+        try {
+            prefs?.edit()?.remove(KEY_API_KEY)?.apply()
+        } catch (_: Throwable) {
+        }
     }
 
     companion object {

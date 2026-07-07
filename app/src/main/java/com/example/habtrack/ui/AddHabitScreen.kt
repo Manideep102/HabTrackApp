@@ -43,21 +43,12 @@ fun AddHabitScreen(
     var increment by remember { mutableStateOf("1") }
 
     // Step size for the +/- goal stepper, per source
-    val step = when (selectedMetric) {
-        HealthMetric.STEPS -> 500f
-        HealthMetric.ACTIVE_CALORIES -> 50f
-        HealthMetric.DISTANCE -> 0.5f
-        null -> 5f
-    }
+    val step = selectedMetric?.goalStep ?: 5f
 
     fun selectMetric(metric: HealthMetric?) {
         selectedMetric = metric
-        when (metric) {
-            HealthMetric.STEPS -> { unit = "steps"; goal = 5000f }
-            HealthMetric.ACTIVE_CALORIES -> { unit = "kcal"; goal = 400f }
-            HealthMetric.DISTANCE -> { unit = "km"; goal = 3f }
-            null -> { unit = "min"; goal = 30f }
-        }
+        unit = metric?.defaultUnit ?: "min"
+        goal = metric?.defaultGoal ?: 30f
     }
 
     Column(
@@ -124,26 +115,18 @@ fun AddHabitScreen(
                 modifier = Modifier.padding(horizontal = 4.dp)
             )
             Spacer(modifier = Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SourceChip("Manual", selectedMetric == null) { selectMetric(null) }
-                SourceChip(
-                    "Steps",
-                    selectedMetric == HealthMetric.STEPS,
-                    enabled = healthConnectAvailable
-                ) { selectMetric(HealthMetric.STEPS) }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SourceChip(
-                    "Active calories",
-                    selectedMetric == HealthMetric.ACTIVE_CALORIES,
-                    enabled = healthConnectAvailable
-                ) { selectMetric(HealthMetric.ACTIVE_CALORIES) }
-                SourceChip(
-                    "Distance",
-                    selectedMetric == HealthMetric.DISTANCE,
-                    enabled = healthConnectAvailable
-                ) { selectMetric(HealthMetric.DISTANCE) }
+            val chips: List<HealthMetric?> = listOf(null) + HealthMetric.entries
+            chips.chunked(2).forEachIndexed { index, rowChips ->
+                if (index > 0) Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rowChips.forEach { metric ->
+                        SourceChip(
+                            metric?.displayName ?: "Manual",
+                            selectedMetric == metric,
+                            enabled = metric == null || healthConnectAvailable
+                        ) { selectMetric(metric) }
+                    }
+                }
             }
             if (!healthConnectAvailable) {
                 Spacer(modifier = Modifier.height(10.dp))
