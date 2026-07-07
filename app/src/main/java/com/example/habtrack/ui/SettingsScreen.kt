@@ -4,6 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -21,8 +23,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -36,6 +40,7 @@ import com.example.habtrack.data.ApiKeyStore
 import com.example.habtrack.health.HealthConnectAvailability
 import com.example.habtrack.health.HealthConnectManager
 import com.example.habtrack.ui.theme.Obsidian
+import com.example.habtrack.ui.theme.ThemeStore
 
 /**
  * Lets the user paste their own Anthropic API key, stored encrypted on-device.
@@ -101,6 +106,66 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(20.dp)
         ) {
+            // ── Accent color ──
+            SectionLabel("Accent color")
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Used for progress rings, bars, buttons, and highlights across the app.",
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+                color = Obsidian.TextLow
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Obsidian.AccentOptions.forEach { (name, color) ->
+                    val selected = Obsidian.Accent == color
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(color.copy(alpha = 0.15f))
+                                .border(
+                                    width = if (selected) 2.dp else 1.dp,
+                                    color = if (selected) color else Obsidian.Stroke,
+                                    shape = CircleShape
+                                )
+                                .clickable { ThemeStore.saveAccent(context, color) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selected) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "$name selected",
+                                    tint = color,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .background(color, CircleShape)
+                                )
+                            }
+                        }
+                        Text(
+                            name.uppercase(),
+                            fontSize = 8.5.sp,
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (selected) color else Obsidian.TextLow
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+            HorizontalDivider(color = Obsidian.StrokeSoft)
+            Spacer(modifier = Modifier.height(20.dp))
+
             SectionLabel("Anthropic API key")
             Spacer(modifier = Modifier.height(8.dp))
             Text(

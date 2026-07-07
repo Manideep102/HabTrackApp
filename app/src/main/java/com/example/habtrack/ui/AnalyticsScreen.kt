@@ -59,7 +59,7 @@ fun ObsidianCard(
  * Analytics Screen: Displays habit statistics, completion rates, and progress charts
  */
 @Composable
-fun AnalyticsScreen(viewModel: HabitViewModel) {
+fun AnalyticsScreen(viewModel: HabitViewModel, modifier: Modifier = Modifier) {
     val completionRate = viewModel.completionRate.collectAsState()
     val averageProgress = viewModel.averageProgress.collectAsState()
     val totalHabits = viewModel.totalHabits.collectAsState()
@@ -75,17 +75,14 @@ fun AnalyticsScreen(viewModel: HabitViewModel) {
     val context = LocalContext.current
 
     LazyColumn(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(Obsidian.Bg)
             .padding(horizontal = 20.dp)
     ) {
+        // Title lives in the app header (MainActivity topBar)
         item {
-            Spacer(modifier = Modifier.height(8.dp))
-            SectionLabel("Last 30 days")
             Spacer(modifier = Modifier.height(4.dp))
-            Text("analytics", style = MaterialTheme.typography.headlineMedium, color = Obsidian.TextHi)
-            Spacer(modifier = Modifier.height(20.dp))
         }
 
         // Stats Overview Cards

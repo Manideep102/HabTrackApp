@@ -3,6 +3,7 @@ package com.example.habtrack
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,8 +43,11 @@ import com.example.habtrack.health.HealthMetric
 import com.example.habtrack.ui.HabitViewModel
 import com.example.habtrack.ui.AnalyticsScreen
 import com.example.habtrack.ui.SettingsScreen
+import com.example.habtrack.ui.HabitDetailScreen
+import com.example.habtrack.ui.AddHabitScreen
 import com.example.habtrack.ui.theme.HabTrackTheme
 import com.example.habtrack.ui.theme.Obsidian
+import com.example.habtrack.ui.theme.ThemeStore
 import com.example.habtrack.workers.HabitResetScheduler
 import com.example.habtrack.notifications.HabitNotificationManager
 
@@ -51,6 +55,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        // Restore the user's chosen accent color
+        ThemeStore.load(this)
 
         // Create notification channel
         HabitNotificationManager.createNotificationChannel(this)
@@ -609,10 +617,13 @@ fun PillTab(text: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 fun HabTrackApp(viewModel: HabitViewModel) {
     var selectedHabit by remember { mutableStateOf<HabitEntity?>(null) }
+    var detailHabit by remember { mutableStateOf<HabitEntity?>(null) }
     var habitToDelete by remember { mutableStateOf<HabitEntity?>(null) }
     var habitForReminder by remember { mutableStateOf<HabitEntity?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    // Habit name pending Health Connect auto-sync setup (set by AddHabitScreen)
+    var pendingAutoSync by remember { mutableStateOf<Pair<String, HealthMetric>?>(null) }
     var selectedTabIndex by remember { mutableStateOf(0) }
     val habits by viewModel.habitListState.collectAsState()
     val averageProgress by viewModel.averageProgress.collectAsState()
@@ -632,9 +643,60 @@ fun HabTrackApp(viewModel: HabitViewModel) {
         }
     }
 
+    // Once the newly created habit lands in the list, enable its auto-sync.
+    LaunchedEffect(habits, pendingAutoSync) {
+        pendingAutoSync?.let { (habitName, metric) ->
+            habits.find { it.name == habitName && !it.autoSyncEnabled }?.let {
+                viewModel.setHabitAutoSync(it, true, metric)
+                viewModel.syncFromHealthConnect(context)
+                pendingAutoSync = null
+            }
+        }
+    }
+
     if (showSettings) {
         SettingsScreen(onBack = { showSettings = false })
         return
+    }
+
+    // ── Full-screen: new habit ──
+    if (showAdd) {
+        AddHabitScreen(
+            healthConnectAvailable = healthConnectAvailable,
+            onBack = { showAdd = false },
+            onSave = { n, g, u, inc, metric ->
+                viewModel.addNewHabit(n, g, u, "#57E6C6", inc)
+                if (metric != null) pendingAutoSync = n to metric
+                showAdd = false
+            }
+        )
+        return
+    }
+
+    // ── Full-screen: habit detail ──
+    detailHabit?.let { d ->
+        val fresh = habits.find { it.id == d.id }
+        if (fresh == null) {
+            // habit was deleted while open
+            detailHabit = null
+        } else {
+            HabitDetailScreen(
+                habit = fresh,
+                onBack = { detailHabit = null },
+                onLog = { selectedHabit = fresh }
+            )
+            selectedHabit?.let { h ->
+                HabitLogBottomSheet(
+                    habit = h,
+                    onDismiss = { selectedHabit = null },
+                    onSave = { v, dateMillis ->
+                        viewModel.updateHabitProgress(h, v, dateMillis)
+                        selectedHabit = null
+                    }
+                )
+            }
+            return
+        }
     }
 
     // "SUNDAY · JUL 5" style date label
@@ -644,7 +706,12 @@ fun HabTrackApp(viewModel: HabitViewModel) {
     Scaffold(
         containerColor = Obsidian.Bg,
         topBar = {
-            Column(modifier = Modifier.background(Obsidian.Bg).padding(horizontal = 20.dp, vertical = 16.dp)) {
+            Column(
+                modifier = Modifier
+                    .background(Obsidian.Bg)
+                    .statusBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -652,9 +719,9 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                     verticalAlignment = Alignment.Top
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        MicroLabel(dayLabel)
+                        MicroLabel(if (selectedTabIndex == 1) "LAST 30 DAYS" else dayLabel)
                         Text(
-                            "today",
+                            if (selectedTabIndex == 1) "analytics" else "today",
                             style = MaterialTheme.typography.headlineMedium,
                             color = Obsidian.TextHi
                         )
@@ -809,7 +876,7 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                     items(habits) { habit ->
                         HabitCard(
                             habit = habit,
-                            onClick = { selectedHabit = habit },
+                            onClick = { detailHabit = habit },
                             onLongClick = { habitToDelete = habit },
                             onReminderClick = { habitForReminder = habit }
                         )
@@ -821,21 +888,13 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                 }
             }
             1 -> {
-                // Analytics Tab
-                AnalyticsScreen(viewModel = viewModel)
+                // Analytics Tab (padding(p) keeps content below the header)
+                AnalyticsScreen(viewModel = viewModel, modifier = Modifier.padding(p))
             }
         }
     }
 
-    if (showAdd) {
-        AddHabitSheet(
-            onDismiss = { showAdd = false },
-            onSave = { n, g, u, inc ->
-                viewModel.addNewHabit(n, g, u, "#57E6C6", inc)
-                showAdd = false
-            }
-        )
-    }
+    // (AddHabitScreen replaced the old AddHabitSheet — see full-screen branch above)
 
     selectedHabit?.let { h ->
         HabitLogBottomSheet(
