@@ -311,46 +311,6 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     }
 
     /**
-     * Updates a habit and reschedules reminder if enabled
-     */
-    fun updateHabitWithReminder(
-        habit: HabitEntity,
-        context: Context
-    ) {
-        viewModelScope.launch {
-            repository.updateHabit(habit)
-
-            // Handle reminder scheduling
-            if (habit.reminderEnabled) {
-                HabitReminderScheduler.scheduleReminder(
-                    context = context,
-                    habitId = habit.id,
-                    habitName = habit.name,
-                    reminderTime = habit.reminderTime
-                )
-            } else {
-                HabitReminderScheduler.cancelReminder(context, habit.id)
-            }
-        }
-    }
-
-    /**
-     * Enables or disables reminder for a habit
-     */
-    fun setHabitReminder(
-        habit: HabitEntity,
-        reminderTime: String,
-        enabled: Boolean,
-        context: Context
-    ) {
-        val updatedHabit = habit.copy(
-            reminderTime = reminderTime,
-            reminderEnabled = enabled
-        )
-        updateHabitWithReminder(updatedHabit, context)
-    }
-
-    /**
      * Updates habit progress and recalculates strength score
      */
     fun updateHabitProgressWithStrength(habit: HabitEntity, newValue: Float) {
