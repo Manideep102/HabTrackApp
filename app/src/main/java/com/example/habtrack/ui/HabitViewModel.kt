@@ -1,6 +1,7 @@
 package com.example.habtrack.ui
 
 import android.content.Context
+import androidx.health.connect.client.HealthConnectClient
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.habtrack.ai.HabitInsightsService
@@ -15,10 +16,12 @@ import com.example.habtrack.notifications.HabitReminderScheduler
 import com.example.habtrack.utils.HabitStrengthCalculator
 import com.example.habtrack.utils.VolumeStatsCalculator
 import com.example.habtrack.utils.HabitHeatmapCalculator
+import com.example.habtrack.utils.HealthBackfillPlanner
 import com.example.habtrack.utils.HabitCorrelationCalculator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.combine
@@ -98,19 +101,26 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // 7. Analytics: Volume statistics data
-    val volumeStatsData: StateFlow<List<HabitVolumeStats>> = habitListState
-        .map { habits ->
+    // 7. Analytics: Volume statistics data — real windowed totals from daily_completions
+    // (last ~1y is enough for the widest window; personalRecord stays on the habit itself).
+    private val oneYearOfCompletions = repository.getCompletionsSince(
+        java.time.LocalDate.now(java.time.ZoneId.systemDefault())
+            .minusDays(366).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+    )
+    val volumeStatsData: StateFlow<List<HabitVolumeStats>> =
+        combine(habitListState, oneYearOfCompletions) { habits, completions ->
+            val byHabit = completions.groupBy { it.habitId }
             habits.map { habit ->
+                val hc = byHabit[habit.id] ?: emptyList()
                 HabitVolumeStats(
                     id = habit.id,
                     name = habit.name,
-                    todayVolume = VolumeStatsCalculator.getTodayVolume(habit),
-                    weeklyVolume = VolumeStatsCalculator.getWeeklyVolume(habit),
-                    monthlyVolume = VolumeStatsCalculator.getMonthlyVolume(habit),
-                    yearlyVolume = VolumeStatsCalculator.getYearlyVolume(habit),
+                    todayVolume = VolumeStatsCalculator.getTodayVolume(hc),
+                    weeklyVolume = VolumeStatsCalculator.getWeeklyVolume(hc),
+                    monthlyVolume = VolumeStatsCalculator.getMonthlyVolume(hc),
+                    yearlyVolume = VolumeStatsCalculator.getYearlyVolume(hc),
                     personalRecord = VolumeStatsCalculator.getPersonalRecord(habit),
-                    averageDailyVolume = VolumeStatsCalculator.getAverageDailyVolume(habit),
+                    averageDailyVolume = VolumeStatsCalculator.getAverageDailyVolume(hc),
                     unit = habit.unit,
                     color = habit.colorHex
                 )
@@ -422,38 +432,108 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     private val _healthSyncState = MutableStateFlow<HealthSyncState>(HealthSyncState.Idle)
     val healthSyncState: StateFlow<HealthSyncState> = _healthSyncState
 
+    // Epoch millis of the last successful sync pass, shown beside the "Synced" indicator.
+    private val _lastSyncTime = MutableStateFlow<Long?>(null)
+    val lastSyncTime: StateFlow<Long?> = _lastSyncTime
+
     /**
      * Checks Health Connect availability/permissions and, if ready, refreshes every
      * auto-sync-enabled habit's currentValue from today's Health Connect totals.
      * Safe to call on every app start - habits without auto-sync are untouched.
      */
     fun syncFromHealthConnect(context: Context) {
-        viewModelScope.launch {
-            val manager = HealthConnectManager(context)
-            if (manager.getAvailability() !is HealthConnectAvailability.Available) {
-                _healthSyncState.value = HealthSyncState.Unavailable
-                return@launch
-            }
+        viewModelScope.launch { runHealthConnectSync(context) }
+    }
 
-            val client = HealthConnectManager.getClient(context)
-            if (client == null) {
-                _healthSyncState.value = HealthSyncState.Unavailable
-                return@launch
-            }
+    /**
+     * Suspending sync for the pull-to-refresh gesture — returns only when the pass finishes,
+     * so the refresh indicator can track it directly. Same work as [syncFromHealthConnect].
+     */
+    suspend fun refreshFromHealthConnect(context: Context) = runHealthConnectSync(context)
 
-            if (!manager.hasAllPermissions(client)) {
-                _healthSyncState.value = HealthSyncState.PermissionRequired
-                return@launch
-            }
+    private suspend fun runHealthConnectSync(context: Context) {
+        val manager = HealthConnectManager(context)
+        if (manager.getAvailability() !is HealthConnectAvailability.Available) {
+            _healthSyncState.value = HealthSyncState.Unavailable
+            return
+        }
 
-            _healthSyncState.value = HealthSyncState.Syncing
-            val syncedHabits = habitListState.value.filter { it.autoSyncEnabled && it.autoSyncMetric != null }
-            for (habit in syncedHabits) {
-                val metric = HealthMetric.entries.find { it.name == habit.autoSyncMetric } ?: continue
-                val newValue = manager.readTodayValueFor(client, metric)
-                applyHealthConnectValue(habit, newValue)
-            }
-            _healthSyncState.value = HealthSyncState.Success(syncedHabits.size)
+        val client = HealthConnectManager.getClient(context)
+        if (client == null) {
+            _healthSyncState.value = HealthSyncState.Unavailable
+            return
+        }
+
+        val granted = manager.grantedPermissions(client)
+        if (granted.isEmpty()) {
+            _healthSyncState.value = HealthSyncState.PermissionRequired
+            return
+        }
+
+        _healthSyncState.value = HealthSyncState.Syncing
+        // Mirror Health Connect one-to-one: create a habit for any granted metric that has data
+        // today and isn't already tracked, so the home page reflects all available HC data.
+        autoCreateHabitsFromHealthConnect(client, manager, granted)
+
+        // Read habits straight from the DB, not habitListState.value: at app start the
+        // sync fires from LaunchedEffect before the WhileSubscribed StateFlow has replaced
+        // its emptyList() seed with the real rows, so .value would sync nothing. Re-read here
+        // so any just-created habits are synced + backfilled in this same pass.
+        val syncedHabits = repository.allHabits.first().filter { it.autoSyncEnabled && it.autoSyncMetric != null }
+        var syncedCount = 0
+        for (habit in syncedHabits) {
+            val metric = HealthMetric.entries.find { it.name == habit.autoSyncMetric } ?: continue
+            // A habit whose metric wasn't granted is skipped, not fatal — a subset
+            // grant (e.g. only Steps) must still sync the habits it covers.
+            if (manager.readPermissionFor(metric) !in granted) continue
+            val newValue = manager.readTodayValueFor(client, metric)
+            applyHealthConnectValue(habit, newValue)
+            // First sync for this metric also backfills the last 30 days of history.
+            if (!habit.autoSyncBackfilled) backfillHistory(habit, client, manager, metric)
+            syncedCount++
+        }
+        _lastSyncTime.value = System.currentTimeMillis()
+        _healthSyncState.value = HealthSyncState.Success(syncedCount)
+    }
+
+    /** Home-screen icon key ([HabitCard]'s `when(iconName)`) for each auto-created metric habit. */
+    private fun iconFor(metric: HealthMetric): String = when (metric) {
+        HealthMetric.STEPS -> "directions_walk"
+        HealthMetric.DISTANCE -> "directions_run"
+        HealthMetric.ACTIVE_CALORIES, HealthMetric.TOTAL_CALORIES -> "local_fire_department"
+        HealthMetric.SLEEP -> "bedtime"
+        HealthMetric.EXERCISE -> "fitness_center"
+        HealthMetric.HYDRATION -> "favorite"
+        HealthMetric.FLOORS -> "bolt"
+    }
+
+    /**
+     * Creates an auto-syncing habit for each granted [HealthMetric] that has data today and isn't
+     * already tracked (matched by [HabitEntity.autoSyncMetric]) — idempotent, so re-syncing never
+     * duplicates. New habits are picked up by the sync loop in the same pass.
+     */
+    private suspend fun autoCreateHabitsFromHealthConnect(
+        client: HealthConnectClient,
+        manager: HealthConnectManager,
+        granted: Set<String>
+    ) {
+        val trackedMetrics = repository.allHabits.first().mapNotNull { it.autoSyncMetric }.toSet()
+        for (metric in HealthMetric.entries) {
+            if (metric.name in trackedMetrics) continue
+            if (manager.readPermissionFor(metric) !in granted) continue
+            if (manager.readTodayValueFor(client, metric) <= 0f) continue
+            repository.insertHabit(
+                HabitEntity(
+                    name = metric.displayName,
+                    goalValue = metric.defaultGoal,
+                    unit = metric.defaultUnit,
+                    colorHex = "#57E6C6",
+                    iconName = iconFor(metric),
+                    incrementValue = metric.goalStep,
+                    autoSyncEnabled = true,
+                    autoSyncMetric = metric.name
+                )
+            )
         }
     }
 
@@ -505,6 +585,45 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     }
 
     /**
+     * One-time per habit: pulls the last 30 days of [metric] history from Health Connect into
+     * daily_completions (only days with real activity, skipping days already recorded and today),
+     * then recomputes the habit's streak/total/PR from the now-complete history. Marks
+     * autoSyncBackfilled so it doesn't re-read 30 days of HC on every later launch.
+     */
+    private suspend fun backfillHistory(
+        habit: HabitEntity,
+        client: HealthConnectClient,
+        manager: HealthConnectManager,
+        metric: HealthMetric
+    ) {
+        val history = manager.readHistoryFor(client, metric, 30)
+
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.LocalDate.now(zone)
+        val windowStart = today.minusDays(30).atStartOfDay(zone).toInstant().toEpochMilli()
+        val endOfYesterday = today.atStartOfDay(zone).toInstant().toEpochMilli() - 1
+        val existingDays = repository.getDailyCompletionsBetween(habit.id, windowStart, endOfYesterday)
+            .map { java.time.Instant.ofEpochMilli(it.dateTime).atZone(zone).toLocalDate() }
+            .toSet()
+
+        HealthBackfillPlanner.planRows(habit.id, habit.goalValue, history, existingDays, today, zone)
+            .forEach { repository.recordDailyCompletion(it) }
+
+        // Recompute aggregate stats from the full history (includes today's row + backfill).
+        val all = repository.getDailyCompletionsForHabit(habit.id).first()
+        val latest = repository.allHabits.first().find { it.id == habit.id } ?: habit
+        repository.updateHabit(
+            latest.copy(
+                currentStreak = HabitHeatmapCalculator.calculateCurrentStreak(all),
+                totalCompletions = all.count { it.isCompleted },
+                personalRecord = maxOf(latest.personalRecord, all.maxOfOrNull { it.progressValue } ?: 0f),
+                autoSyncBackfilled = true,
+                lastUpdated = System.currentTimeMillis()
+            )
+        )
+    }
+
+    /**
      * Enables/disables Health Connect auto-sync for a habit and records which metric feeds it.
      * Prefills the unit with the metric's default only if the user hasn't already
      * customized it away from a previous auto-fill default; goalValue is never touched.
@@ -521,9 +640,48 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
                 habit.copy(
                     autoSyncEnabled = enabled,
                     autoSyncMetric = if (enabled) metric?.name else null,
+                    // Re-arm the 30-day backfill whenever the feeding metric changes.
+                    autoSyncBackfilled = if (enabled && habit.autoSyncMetric != metric?.name) false else habit.autoSyncBackfilled,
                     unit = newUnit
                 )
             )
+        }
+    }
+
+    /**
+     * Saves the Reminder-settings sheet in ONE atomic update. Splitting reminder and auto-sync
+     * into two separate `updateHabit` calls (each copied from the same stale habit) made the
+     * second clobber the first — enabling a reminder never persisted. This applies both at once.
+     */
+    fun updateHabitSettings(
+        habit: HabitEntity,
+        reminderTime: String,
+        reminderEnabled: Boolean,
+        autoSyncEnabled: Boolean,
+        metric: HealthMetric?,
+        context: Context
+    ) {
+        viewModelScope.launch {
+            val defaultUnits = HealthMetric.entries.map { it.defaultUnit }
+            val newUnit = if (autoSyncEnabled && metric != null && (habit.unit.isBlank() || habit.unit in defaultUnits)) {
+                metric.defaultUnit
+            } else {
+                habit.unit
+            }
+            val updated = habit.copy(
+                reminderTime = reminderTime,
+                reminderEnabled = reminderEnabled,
+                autoSyncEnabled = autoSyncEnabled,
+                autoSyncMetric = if (autoSyncEnabled) metric?.name else null,
+                autoSyncBackfilled = if (autoSyncEnabled && habit.autoSyncMetric != metric?.name) false else habit.autoSyncBackfilled,
+                unit = newUnit
+            )
+            repository.updateHabit(updated)
+            if (reminderEnabled) {
+                HabitReminderScheduler.scheduleReminder(context, updated.id, updated.name, reminderTime)
+            } else {
+                HabitReminderScheduler.cancelReminder(context, updated.id)
+            }
         }
     }
 }

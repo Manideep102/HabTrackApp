@@ -64,7 +64,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
     ) { granted ->
-        hcPermissionsGranted = granted.containsAll(healthConnectManager.getRequiredPermissions())
+        hcPermissionsGranted = granted.isNotEmpty()
     }
 
     LaunchedEffect(Unit) {
@@ -74,7 +74,9 @@ fun SettingsScreen(onBack: () -> Unit) {
             if (availability is HealthConnectAvailability.Available) {
                 val client = HealthConnectManager.getClient(context)
                 if (client != null) {
-                    hcPermissionsGranted = healthConnectManager.hasAllPermissions(client)
+                    // Connected as soon as any metric is granted — sync works per-metric,
+                    // so requiring all 8 would falsely read "not connected" after a subset grant.
+                    hcPermissionsGranted = healthConnectManager.grantedPermissions(client).isNotEmpty()
                 }
             }
         } catch (e: CancellationException) {

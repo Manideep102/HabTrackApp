@@ -11,7 +11,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 // THE DATABASE
-@Database(entities = [HabitEntity::class, DailyCompletion::class], version = 4, exportSchema = false)
+@Database(entities = [HabitEntity::class, DailyCompletion::class], version = 5, exportSchema = false)
 abstract class HabitDatabase : RoomDatabase() {
     abstract fun habitDao(): HabitDao
     abstract fun dailyCompletionDao(): DailyCompletionDao
@@ -30,6 +30,16 @@ abstract class HabitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the flag tracking whether a habit's last-30-days Health Connect history
+         * has been backfilled, without wiping existing habit data.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE habits ADD COLUMN autoSyncBackfilled INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): HabitDatabase {
             return Instance ?: synchronized(this) {
                 Room.databaseBuilder(
@@ -37,7 +47,7 @@ abstract class HabitDatabase : RoomDatabase() {
                     HabitDatabase::class.java,
                     "habit_database"
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { Instance = it }

@@ -6,6 +6,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
+// Rescheduling policy: KEEP would ignore a changed reminder time, so edits must re-enqueue.
 
 /**
  * HabitReminderScheduler: Manages scheduling habit reminders
@@ -55,7 +56,7 @@ object HabitReminderScheduler {
         // Enqueue the work
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             workName,
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
             reminderWork
         )
     }

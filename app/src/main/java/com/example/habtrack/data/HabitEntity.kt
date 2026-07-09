@@ -27,5 +27,6 @@ data class HabitEntity(
     val personalRecord: Float = 0f, // Highest value ever achieved
     val incrementValue: Float = 1f, // Custom increment amount for +/- buttons
     val autoSyncEnabled: Boolean = false, // Whether this habit's progress is synced from Health Connect
-    val autoSyncMetric: String? = null // Health Connect metric name (HealthMetric.name) feeding this habit, or null
+    val autoSyncMetric: String? = null, // Health Connect metric name (HealthMetric.name) feeding this habit, or null
+    val autoSyncBackfilled: Boolean = false // Whether the last-30-days Health Connect history has been backfilled for this metric
 )

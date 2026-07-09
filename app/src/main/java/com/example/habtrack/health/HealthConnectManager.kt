@@ -64,16 +64,26 @@ class HealthConnectManager(private val context: Context) {
         HealthConnectAvailability.NotInstalled
     }
 
-    fun getRequiredPermissions(): Set<String> = setOf(
-        HealthPermission.getReadPermission(StepsRecord::class),
-        HealthPermission.getReadPermission(ActiveCaloriesBurnedRecord::class),
-        HealthPermission.getReadPermission(DistanceRecord::class),
-        HealthPermission.getReadPermission(SleepSessionRecord::class),
-        HealthPermission.getReadPermission(ExerciseSessionRecord::class),
-        HealthPermission.getReadPermission(TotalCaloriesBurnedRecord::class),
-        HealthPermission.getReadPermission(HydrationRecord::class),
-        HealthPermission.getReadPermission(FloorsClimbedRecord::class)
-    )
+    /** The Health Connect read permission string backing a single [metric]. */
+    fun readPermissionFor(metric: HealthMetric): String = when (metric) {
+        HealthMetric.STEPS -> HealthPermission.getReadPermission(StepsRecord::class)
+        HealthMetric.ACTIVE_CALORIES -> HealthPermission.getReadPermission(ActiveCaloriesBurnedRecord::class)
+        HealthMetric.DISTANCE -> HealthPermission.getReadPermission(DistanceRecord::class)
+        HealthMetric.SLEEP -> HealthPermission.getReadPermission(SleepSessionRecord::class)
+        HealthMetric.EXERCISE -> HealthPermission.getReadPermission(ExerciseSessionRecord::class)
+        HealthMetric.TOTAL_CALORIES -> HealthPermission.getReadPermission(TotalCaloriesBurnedRecord::class)
+        HealthMetric.HYDRATION -> HealthPermission.getReadPermission(HydrationRecord::class)
+        HealthMetric.FLOORS -> HealthPermission.getReadPermission(FloorsClimbedRecord::class)
+    }
+
+    // Derived from readPermissionFor so the requested set can never drift from what
+    // each metric actually reads.
+    fun getRequiredPermissions(): Set<String> =
+        HealthMetric.entries.map { readPermissionFor(it) }.toSet()
+
+    /** Permissions the user has actually granted — the sync gates per-metric on this. */
+    suspend fun grantedPermissions(client: HealthConnectClient): Set<String> =
+        client.permissionController.getGrantedPermissions()
 
     suspend fun hasAllPermissions(client: HealthConnectClient): Boolean {
         return client.permissionController.getGrantedPermissions().containsAll(getRequiredPermissions())
@@ -85,17 +95,29 @@ class HealthConnectManager(private val context: Context) {
      * Never throws — a permission/availability problem just yields 0f so a
      * sync failure can't crash app start.
      */
-    suspend fun readTodayValueFor(client: HealthConnectClient, metric: HealthMetric): Float {
+    suspend fun readTodayValueFor(client: HealthConnectClient, metric: HealthMetric): Float =
+        readValueFor(client, metric, todayTimeRangeFilter())
+
+    /**
+     * Reads [metric]'s aggregated total for an arbitrary [range]. Same normalization and
+     * never-throws contract as [readTodayValueFor]; the today path is just this with a
+     * start-of-day → now range.
+     */
+    private suspend fun readValueFor(
+        client: HealthConnectClient,
+        metric: HealthMetric,
+        range: TimeRangeFilter
+    ): Float {
         return try {
             when (metric) {
-                HealthMetric.STEPS -> readTodaySteps(client)
-                HealthMetric.ACTIVE_CALORIES -> readTodayActiveCalories(client)
-                HealthMetric.DISTANCE -> readTodayDistanceKilometers(client)
-                HealthMetric.SLEEP -> readTodaySleepHours(client)
-                HealthMetric.EXERCISE -> readTodayExerciseMinutes(client)
-                HealthMetric.TOTAL_CALORIES -> readTodayTotalCalories(client)
-                HealthMetric.HYDRATION -> readTodayHydrationLiters(client)
-                HealthMetric.FLOORS -> readTodayFloorsClimbed(client)
+                HealthMetric.STEPS -> readSteps(client, range)
+                HealthMetric.ACTIVE_CALORIES -> readActiveCalories(client, range)
+                HealthMetric.DISTANCE -> readDistanceKilometers(client, range)
+                HealthMetric.SLEEP -> readSleepHours(client, range)
+                HealthMetric.EXERCISE -> readExerciseMinutes(client, range)
+                HealthMetric.TOTAL_CALORIES -> readTotalCalories(client, range)
+                HealthMetric.HYDRATION -> readHydrationLiters(client, range)
+                HealthMetric.FLOORS -> readFloorsClimbed(client, range)
             }
         } catch (e: CancellationException) {
             throw e
@@ -104,62 +126,68 @@ class HealthConnectManager(private val context: Context) {
         }
     }
 
-    private suspend fun readTodaySteps(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(StepsRecord.COUNT_TOTAL), todayTimeRangeFilter())
-        )
+    /**
+     * Today's totals for the last [days] days (excluding today), one entry per day, keyed by
+     * date in the device's zone. Only days with a value > 0 are returned so empty days don't
+     * pollute history. Used for the one-time 30-day backfill; the HC read grant covers the
+     * past 30 days.
+     */
+    suspend fun readHistoryFor(
+        client: HealthConnectClient,
+        metric: HealthMetric,
+        days: Int = 30
+    ): Map<LocalDate, Float> {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val result = LinkedHashMap<LocalDate, Float>()
+        for (offset in days downTo 1) {
+            val date = today.minusDays(offset.toLong())
+            val value = readValueFor(client, metric, dayTimeRangeFilter(date, zone))
+            if (value > 0f) result[date] = value
+        }
+        return result
+    }
+
+    private suspend fun readSteps(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(StepsRecord.COUNT_TOTAL), range))
         return (result[StepsRecord.COUNT_TOTAL] ?: 0L).toFloat()
     }
 
-    private suspend fun readTodayActiveCalories(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL), todayTimeRangeFilter())
-        )
+    private suspend fun readActiveCalories(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL), range))
         return (result[ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL]?.inKilocalories ?: 0.0).toFloat()
     }
 
-    private suspend fun readTodayDistanceKilometers(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(DistanceRecord.DISTANCE_TOTAL), todayTimeRangeFilter())
-        )
+    private suspend fun readDistanceKilometers(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(DistanceRecord.DISTANCE_TOTAL), range))
         return (result[DistanceRecord.DISTANCE_TOTAL]?.inKilometers ?: 0.0).toFloat()
     }
 
     // Sessions crossing midnight only count their after-midnight portion — HC clips
     // aggregates to the requested range, and we deliberately keep the same
     // start-of-day window as every other metric
-    private suspend fun readTodaySleepHours(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(SleepSessionRecord.SLEEP_DURATION_TOTAL), todayTimeRangeFilter())
-        )
+    private suspend fun readSleepHours(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(SleepSessionRecord.SLEEP_DURATION_TOTAL), range))
         return ((result[SleepSessionRecord.SLEEP_DURATION_TOTAL]?.toMinutes() ?: 0L) / 60f)
     }
 
-    private suspend fun readTodayExerciseMinutes(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(ExerciseSessionRecord.EXERCISE_DURATION_TOTAL), todayTimeRangeFilter())
-        )
+    private suspend fun readExerciseMinutes(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(ExerciseSessionRecord.EXERCISE_DURATION_TOTAL), range))
         return (result[ExerciseSessionRecord.EXERCISE_DURATION_TOTAL]?.toMinutes() ?: 0L).toFloat()
     }
 
-    private suspend fun readTodayTotalCalories(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(TotalCaloriesBurnedRecord.ENERGY_TOTAL), todayTimeRangeFilter())
-        )
+    private suspend fun readTotalCalories(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(TotalCaloriesBurnedRecord.ENERGY_TOTAL), range))
         return (result[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories ?: 0.0).toFloat()
     }
 
-    private suspend fun readTodayHydrationLiters(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(HydrationRecord.VOLUME_TOTAL), todayTimeRangeFilter())
-        )
+    private suspend fun readHydrationLiters(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(HydrationRecord.VOLUME_TOTAL), range))
         return (result[HydrationRecord.VOLUME_TOTAL]?.inLiters ?: 0.0).toFloat()
     }
 
-    private suspend fun readTodayFloorsClimbed(client: HealthConnectClient): Float {
-        val result = client.aggregate(
-            AggregateRequest(setOf(FloorsClimbedRecord.FLOORS_CLIMBED_TOTAL), todayTimeRangeFilter())
-        )
+    private suspend fun readFloorsClimbed(client: HealthConnectClient, range: TimeRangeFilter): Float {
+        val result = client.aggregate(AggregateRequest(setOf(FloorsClimbedRecord.FLOORS_CLIMBED_TOTAL), range))
         return (result[FloorsClimbedRecord.FLOORS_CLIMBED_TOTAL] ?: 0.0).toFloat()
     }
 
@@ -167,6 +195,12 @@ class HealthConnectManager(private val context: Context) {
         val zone = ZoneId.systemDefault()
         val startOfDay = LocalDate.now(zone).atStartOfDay(zone).toInstant()
         return TimeRangeFilter.between(startOfDay, Instant.now())
+    }
+
+    private fun dayTimeRangeFilter(date: LocalDate, zone: ZoneId): TimeRangeFilter {
+        val startOfDay = date.atStartOfDay(zone).toInstant()
+        val startOfNextDay = date.plusDays(1).atStartOfDay(zone).toInstant()
+        return TimeRangeFilter.between(startOfDay, startOfNextDay)
     }
 
     companion object {

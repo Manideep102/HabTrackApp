@@ -55,4 +55,8 @@ class HabitRepository(
     fun getRecentCompletions(limit: Int = 365): Flow<List<DailyCompletion>> {
         return dailyCompletionDao.getRecentCompletions(limit)
     }
+
+    fun getCompletionsSince(startDate: Long): Flow<List<DailyCompletion>> {
+        return dailyCompletionDao.getCompletionsSince(startDate)
+    }
 }

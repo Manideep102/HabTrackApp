@@ -1,9 +1,16 @@
 package com.example.habtrack
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -20,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,12 +50,14 @@ import com.example.habtrack.health.HealthConnectAvailability
 import com.example.habtrack.health.HealthConnectManager
 import com.example.habtrack.health.HealthMetric
 import com.example.habtrack.ui.HabitViewModel
+import com.example.habtrack.ui.HealthSyncState
 import com.example.habtrack.ui.AnalyticsScreen
 import com.example.habtrack.ui.SettingsScreen
 import com.example.habtrack.ui.HabitDetailScreen
 import com.example.habtrack.ui.AddHabitScreen
 import com.example.habtrack.ui.theme.HabTrackTheme
 import com.example.habtrack.ui.theme.Obsidian
+import kotlinx.coroutines.launch
 import com.example.habtrack.ui.theme.ThemeStore
 import com.example.habtrack.workers.HabitResetScheduler
 import com.example.habtrack.notifications.HabitNotificationManager
@@ -140,8 +150,7 @@ fun ThinProgressBar(progress: Float, modifier: Modifier = Modifier, dimmed: Bool
 fun ReminderSettingsSheet(
     habit: HabitEntity,
     onDismiss: () -> Unit,
-    onSave: (String, Boolean) -> Unit,
-    onSyncSave: (Boolean, HealthMetric?) -> Unit,
+    onSave: (reminderTime: String, reminderEnabled: Boolean, autoSyncEnabled: Boolean, metric: HealthMetric?) -> Unit,
     healthConnectAvailable: Boolean
 ) {
     var reminderTime by remember { mutableStateOf(habit.reminderTime) }
@@ -256,8 +265,7 @@ fun ReminderSettingsSheet(
             Spacer(modifier = Modifier.height(24.dp))
             Button(
                 onClick = {
-                    onSave(reminderTime, reminderEnabled)
-                    onSyncSave(autoSyncEnabled, if (autoSyncEnabled) selectedMetric else null)
+                    onSave(reminderTime, reminderEnabled, autoSyncEnabled, if (autoSyncEnabled) selectedMetric else null)
                 },
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(16.dp),
@@ -607,6 +615,7 @@ fun PillTab(text: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HabTrackApp(viewModel: HabitViewModel) {
     var selectedHabit by remember { mutableStateOf<HabitEntity?>(null) }
@@ -622,6 +631,25 @@ fun HabTrackApp(viewModel: HabitViewModel) {
     val averageProgress by viewModel.averageProgress.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     var healthConnectAvailable by remember { mutableStateOf(false) }
+    // Pull-to-refresh on the Today tab triggers a manual Health Connect sync.
+    var isRefreshing by remember { mutableStateOf(false) }
+    val refreshScope = rememberCoroutineScope()
+    // System back on the Today tab asks before leaving the app.
+    var showExitConfirm by remember { mutableStateOf(false) }
+
+    // Ask for notification permission on Android 13+ — without it, scheduled habit
+    // reminders are silently dropped by the system.
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* result handled by the system UI; reminders simply no-op if denied */ }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     // Refresh auto-synced habits from Health Connect once per app session.
     LaunchedEffect(Unit) {
@@ -636,6 +664,33 @@ fun HabTrackApp(viewModel: HabitViewModel) {
         }
     }
 
+    // Surface the result of a sync pass — without this, sync succeeds or fails silently
+    // and reads to the user as "not working".
+    val healthSyncState by viewModel.healthSyncState.collectAsState()
+    val lastSyncTime by viewModel.lastSyncTime.collectAsState()
+    LaunchedEffect(healthSyncState) {
+        when (val state = healthSyncState) {
+            is HealthSyncState.Success -> if (state.syncedCount > 0) {
+                Toast.makeText(
+                    context,
+                    "Synced ${state.syncedCount} habit(s) from Health Connect",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            is HealthSyncState.PermissionRequired -> Toast.makeText(
+                context,
+                "Grant Health Connect access in Settings to sync",
+                Toast.LENGTH_LONG
+            ).show()
+            is HealthSyncState.Error -> Toast.makeText(
+                context,
+                "Health Connect sync failed: ${state.message}",
+                Toast.LENGTH_LONG
+            ).show()
+            else -> Unit
+        }
+    }
+
     // Once the newly created habit lands in the list, enable its auto-sync.
     LaunchedEffect(habits, pendingAutoSync) {
         pendingAutoSync?.let { (habitName, metric) ->
@@ -647,14 +702,15 @@ fun HabTrackApp(viewModel: HabitViewModel) {
         }
     }
 
-    // System back mirrors the on-screen back arrows; disabled on the Today
-    // tab with nothing open so back still exits the app there
-    BackHandler(enabled = showSettings || showAdd || detailHabit != null || selectedTabIndex != 0) {
+    // System back mirrors the on-screen back arrows; on the Today tab with nothing
+    // open it asks before exiting instead of leaving the app immediately.
+    BackHandler(enabled = true) {
         when {
             showSettings -> showSettings = false
             showAdd -> showAdd = false
             detailHabit != null -> detailHabit = null
-            else -> selectedTabIndex = 0
+            selectedTabIndex != 0 -> selectedTabIndex = 0
+            else -> showExitConfirm = true
         }
     }
 
@@ -769,12 +825,24 @@ fun HabTrackApp(viewModel: HabitViewModel) {
     ) { p ->
         when (selectedTabIndex) {
             0 -> {
-                // Today Tab - Habits View
-                LazyColumn(
+                // Today Tab - Habits View. Pull down to manually re-sync Health Connect.
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = {
+                        refreshScope.launch {
+                            isRefreshing = true
+                            viewModel.refreshFromHealthConnect(context)
+                            isRefreshing = false
+                        }
+                    },
                     modifier = Modifier
                         .padding(p)
                         .fillMaxSize()
                         .background(Obsidian.Bg)
+                ) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
                         .padding(horizontal = 20.dp)
                 ) {
                     item {
@@ -868,7 +936,11 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                                         .size(6.dp)
                                         .background(Obsidian.Accent, CircleShape)
                                 )
-                                MicroLabel("Health Connect · Synced")
+                                val syncedLabel = lastSyncTime?.let {
+                                    val time = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(it))
+                                    "Health Connect · Synced · $time"
+                                } ?: "Health Connect · Synced"
+                                MicroLabel(syncedLabel)
                             }
                         }
 
@@ -890,6 +962,7 @@ fun HabTrackApp(viewModel: HabitViewModel) {
                         Spacer(modifier = Modifier.height(24.dp))
                     }
                 }
+                }
             }
             1 -> {
                 // Analytics Tab (padding(p) keeps content below the header)
@@ -907,6 +980,27 @@ fun HabTrackApp(viewModel: HabitViewModel) {
             onSave = { v, dateMillis ->
                 viewModel.updateHabitProgress(h, v, dateMillis)
                 selectedHabit = null
+            }
+        )
+    }
+
+    if (showExitConfirm) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirm = false },
+            title = { Text("Exit HabTrack?") },
+            text = { Text("Are you sure you want to leave?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExitConfirm = false
+                    (context as? android.app.Activity)?.finish()
+                }) {
+                    Text("Exit", color = Color(0xFFF2B5B5))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitConfirm = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -936,12 +1030,9 @@ fun HabTrackApp(viewModel: HabitViewModel) {
         ReminderSettingsSheet(
             habit = h,
             onDismiss = { habitForReminder = null },
-            onSave = { time, enabled ->
-                viewModel.setHabitReminder(h, time, enabled, context)
+            onSave = { time, enabled, autoSync, metric ->
+                viewModel.updateHabitSettings(h, time, enabled, autoSync, metric, context)
                 habitForReminder = null
-            },
-            onSyncSave = { enabled, metric ->
-                viewModel.setHabitAutoSync(h, enabled, metric)
             },
             healthConnectAvailable = healthConnectAvailable
         )
