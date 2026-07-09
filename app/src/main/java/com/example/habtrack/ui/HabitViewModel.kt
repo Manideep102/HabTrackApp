@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.habtrack.ai.HabitInsightsService
 import com.example.habtrack.data.ApiKeyStore
+import com.example.habtrack.data.AutoCreatedMetricsStore
 import com.example.habtrack.data.DailyCompletion
 import com.example.habtrack.data.HabitEntity
 import com.example.habtrack.data.HabitRepository
@@ -432,8 +433,8 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
 
         _healthSyncState.value = HealthSyncState.Syncing
         // Mirror Health Connect one-to-one: create a habit for any granted metric that has data
-        // today and isn't already tracked, so the home page reflects all available HC data.
-        autoCreateHabitsFromHealthConnect(client, manager, granted)
+        // today and hasn't been seen before, so the home page reflects newly-available HC data.
+        autoCreateHabitsFromHealthConnect(context, client, manager, granted)
 
         // Read habits straight from the DB, not habitListState.value: at app start the
         // sync fires from LaunchedEffect before the WhileSubscribed StateFlow has replaced
@@ -468,18 +469,23 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     }
 
     /**
-     * Creates an auto-syncing habit for each granted [HealthMetric] that has data today and isn't
-     * already tracked (matched by [HabitEntity.autoSyncMetric]) — idempotent, so re-syncing never
-     * duplicates. New habits are picked up by the sync loop in the same pass.
+     * Creates an auto-syncing habit for each granted [HealthMetric] that has data today and has
+     * never been seen before. "Seen" = ever tracked by a habit (persisted in
+     * [AutoCreatedMetricsStore]), so deleting an auto-created habit does NOT resurrect it on the
+     * next sync — a genuinely-new metric still auto-creates once. New habits are picked up by the
+     * sync loop in the same pass.
      */
     private suspend fun autoCreateHabitsFromHealthConnect(
+        context: Context,
         client: HealthConnectClient,
         manager: HealthConnectManager,
         granted: Set<String>
     ) {
         val trackedMetrics = repository.allHabits.first().mapNotNull { it.autoSyncMetric }.toSet()
+        val seen = AutoCreatedMetricsStore.get(context) + trackedMetrics
+        val created = mutableSetOf<String>()
         for (metric in HealthMetric.entries) {
-            if (metric.name in trackedMetrics) continue
+            if (metric.name in seen) continue
             if (manager.readPermissionFor(metric) !in granted) continue
             if (manager.readTodayValueFor(client, metric) <= 0f) continue
             repository.insertHabit(
@@ -494,6 +500,35 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
                     autoSyncMetric = metric.name
                 )
             )
+            created += metric.name
+        }
+        // Remember every metric that now has (or ever had) a habit so it's never auto-created again.
+        AutoCreatedMetricsStore.add(context, seen + created)
+    }
+
+    /**
+     * Manually creates an auto-syncing habit for [metric] (from Settings), regardless of whether it
+     * has data today — lets the user deliberately re-add a metric they removed. No-ops if a habit
+     * already tracks it. Marks the metric as seen and runs a sync to populate its value + backfill.
+     */
+    fun createHabitForMetric(metric: HealthMetric, context: Context) {
+        viewModelScope.launch {
+            val tracked = repository.allHabits.first().mapNotNull { it.autoSyncMetric }.toSet()
+            if (metric.name in tracked) return@launch
+            repository.insertHabit(
+                HabitEntity(
+                    name = metric.displayName,
+                    goalValue = metric.defaultGoal,
+                    unit = metric.defaultUnit,
+                    colorHex = "#57E6C6",
+                    iconName = iconFor(metric),
+                    incrementValue = metric.goalStep,
+                    autoSyncEnabled = true,
+                    autoSyncMetric = metric.name
+                )
+            )
+            AutoCreatedMetricsStore.add(context, setOf(metric.name))
+            runHealthConnectSync(context)
         }
     }
 

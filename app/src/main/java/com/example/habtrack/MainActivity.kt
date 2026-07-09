@@ -715,7 +715,11 @@ fun HabTrackApp(viewModel: HabitViewModel) {
     }
 
     if (showSettings) {
-        SettingsScreen(onBack = { showSettings = false })
+        SettingsScreen(
+            onBack = { showSettings = false },
+            trackedMetricNames = habits.mapNotNull { it.autoSyncMetric }.toSet(),
+            onCreateHabitFromMetric = { metric -> viewModel.createHabitForMetric(metric, context) }
+        )
         return
     }
 

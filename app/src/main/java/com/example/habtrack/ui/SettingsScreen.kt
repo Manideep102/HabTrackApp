@@ -39,6 +39,7 @@ import androidx.health.connect.client.PermissionController
 import com.example.habtrack.data.ApiKeyStore
 import com.example.habtrack.health.HealthConnectAvailability
 import com.example.habtrack.health.HealthConnectManager
+import com.example.habtrack.health.HealthMetric
 import com.example.habtrack.ui.theme.Obsidian
 import com.example.habtrack.ui.theme.ThemeStore
 import kotlin.coroutines.cancellation.CancellationException
@@ -49,7 +50,11 @@ import kotlin.coroutines.cancellation.CancellationException
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    trackedMetricNames: Set<String> = emptySet(),
+    onCreateHabitFromMetric: (HealthMetric) -> Unit = {}
+) {
     val context = LocalContext.current
     val apiKeyStore = remember { ApiKeyStore(context) }
 
@@ -312,6 +317,48 @@ fun SettingsScreen(onBack: () -> Unit) {
                 is HealthConnectAvailability.Available -> {
                     if (hcPermissionsGranted) {
                         Text("Connected", color = Obsidian.Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text(
+                            "ADD A HABIT FROM HEALTH CONNECT",
+                            fontSize = 9.sp,
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Obsidian.TextLow
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "Create a habit that auto-syncs from a metric. Handy to re-add one you removed.",
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = Obsidian.TextLow
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HealthMetric.entries.forEach { metric ->
+                            val alreadyAdded = metric.name in trackedMetricNames
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = !alreadyAdded) { onCreateHabitFromMetric(metric) }
+                                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    metric.displayName,
+                                    fontSize = 14.sp,
+                                    color = if (alreadyAdded) Obsidian.TextLow else Obsidian.TextHi
+                                )
+                                Text(
+                                    if (alreadyAdded) "ADDED" else "+ ADD",
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (alreadyAdded) Obsidian.TextLow else Obsidian.Accent
+                                )
+                            }
+                        }
                     } else {
                         Text("Not connected yet.", fontSize = 13.sp, color = Obsidian.TextLow)
                         Spacer(modifier = Modifier.height(12.dp))
