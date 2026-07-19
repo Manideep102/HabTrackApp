@@ -4,6 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -21,8 +23,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -35,7 +39,10 @@ import androidx.health.connect.client.PermissionController
 import com.example.habtrack.data.ApiKeyStore
 import com.example.habtrack.health.HealthConnectAvailability
 import com.example.habtrack.health.HealthConnectManager
+import com.example.habtrack.health.HealthMetric
 import com.example.habtrack.ui.theme.Obsidian
+import com.example.habtrack.ui.theme.ThemeStore
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Lets the user paste their own Anthropic API key, stored encrypted on-device.
@@ -43,7 +50,11 @@ import com.example.habtrack.ui.theme.Obsidian
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    trackedMetricNames: Set<String> = emptySet(),
+    onCreateHabitFromMetric: (HealthMetric) -> Unit = {}
+) {
     val context = LocalContext.current
     val apiKeyStore = remember { ApiKeyStore(context) }
 
@@ -58,7 +69,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
     ) { granted ->
-        hcPermissionsGranted = granted.containsAll(healthConnectManager.getRequiredPermissions())
+        hcPermissionsGranted = granted.isNotEmpty()
     }
 
     LaunchedEffect(Unit) {
@@ -68,10 +79,14 @@ fun SettingsScreen(onBack: () -> Unit) {
             if (availability is HealthConnectAvailability.Available) {
                 val client = HealthConnectManager.getClient(context)
                 if (client != null) {
-                    hcPermissionsGranted = healthConnectManager.hasAllPermissions(client)
+                    // Connected as soon as any metric is granted — sync works per-metric,
+                    // so requiring all 8 would falsely read "not connected" after a subset grant.
+                    hcPermissionsGranted = healthConnectManager.grantedPermissions(client).isNotEmpty()
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
             hcAvailability = HealthConnectAvailability.NotInstalled
         }
     }
@@ -101,6 +116,66 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(20.dp)
         ) {
+            // ── Accent color ──
+            SectionLabel("Accent color")
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Used for progress rings, bars, buttons, and highlights across the app.",
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+                color = Obsidian.TextLow
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Obsidian.AccentOptions.forEach { (name, color) ->
+                    val selected = Obsidian.Accent == color
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(color.copy(alpha = 0.15f))
+                                .border(
+                                    width = if (selected) 2.dp else 1.dp,
+                                    color = if (selected) color else Obsidian.Stroke,
+                                    shape = CircleShape
+                                )
+                                .clickable { ThemeStore.saveAccent(context, color) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selected) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "$name selected",
+                                    tint = color,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .background(color, CircleShape)
+                                )
+                            }
+                        }
+                        Text(
+                            name.uppercase(),
+                            fontSize = 8.5.sp,
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (selected) color else Obsidian.TextLow
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+            HorizontalDivider(color = Obsidian.StrokeSoft)
+            Spacer(modifier = Modifier.height(20.dp))
+
             SectionLabel("Anthropic API key")
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -242,6 +317,48 @@ fun SettingsScreen(onBack: () -> Unit) {
                 is HealthConnectAvailability.Available -> {
                     if (hcPermissionsGranted) {
                         Text("Connected", color = Obsidian.Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text(
+                            "ADD A HABIT FROM HEALTH CONNECT",
+                            fontSize = 9.sp,
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Obsidian.TextLow
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "Create a habit that auto-syncs from a metric. Handy to re-add one you removed.",
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = Obsidian.TextLow
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HealthMetric.entries.forEach { metric ->
+                            val alreadyAdded = metric.name in trackedMetricNames
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = !alreadyAdded) { onCreateHabitFromMetric(metric) }
+                                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    metric.displayName,
+                                    fontSize = 14.sp,
+                                    color = if (alreadyAdded) Obsidian.TextLow else Obsidian.TextHi
+                                )
+                                Text(
+                                    if (alreadyAdded) "ADDED" else "+ ADD",
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (alreadyAdded) Obsidian.TextLow else Obsidian.Accent
+                                )
+                            }
+                        }
                     } else {
                         Text("Not connected yet.", fontSize = 13.sp, color = Obsidian.TextLow)
                         Spacer(modifier = Modifier.height(12.dp))

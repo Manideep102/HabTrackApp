@@ -1,91 +1,66 @@
 package com.example.habtrack.utils
 
+import com.example.habtrack.data.DailyCompletion
 import com.example.habtrack.data.HabitEntity
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
- * VolumeStatsCalculator: Calculates aggregate volume statistics for habits
- * Used for tracking cumulative totals like "400km walked this year"
+ * VolumeStatsCalculator: Aggregates real logged volume from a habit's daily_completions
+ * (e.g. "400km walked this year"). Windowed totals are rolling from today, inclusive.
  */
 object VolumeStatsCalculator {
 
-    /**
-     * Calculates total volume for current day
-     */
-    fun getTodayVolume(habit: HabitEntity): Float {
-        val isToday = isDateToday(habit.lastUpdated)
-        return if (isToday) habit.currentValue else 0f
-    }
+    private fun dateOf(millis: Long, zone: ZoneId): LocalDate =
+        Instant.ofEpochMilli(millis).atZone(zone).toLocalDate()
 
     /**
-     * Calculates estimated weekly volume based on current streak
+     * Collapses [completions] to one value per calendar day. A day can hold several rows
+     * (repeated manual logs are inserted, not merged); the latest write (max timestamp) is
+     * authoritative, matching the habit's currentValue semantics.
      */
-    fun getWeeklyVolume(habit: HabitEntity): Float {
-        val daysInWeek = minOf(7, habit.currentStreak)
-        val avgDailyValue = if (habit.totalCompletions > 0) {
-            (habit.currentValue * (habit.currentStreak + 1)) / habit.totalCompletions
-        } else {
-            habit.currentValue
-        }
-        return avgDailyValue * daysInWeek
+    private fun valuePerDay(completions: List<DailyCompletion>, zone: ZoneId): Map<LocalDate, Float> =
+        completions
+            .groupBy { dateOf(it.dateTime, zone) }
+            .mapValues { (_, rows) -> rows.maxByOrNull { it.timestamp }?.progressValue ?: 0f }
+
+    /** Total logged today. */
+    fun getTodayVolume(completions: List<DailyCompletion>, zone: ZoneId = ZoneId.systemDefault()): Float =
+        valuePerDay(completions, zone)[LocalDate.now(zone)] ?: 0f
+
+    /** Sum of per-day totals over the last [days] days (inclusive of today). */
+    private fun windowVolume(completions: List<DailyCompletion>, days: Int, zone: ZoneId): Float {
+        val today = LocalDate.now(zone)
+        val start = today.minusDays((days - 1).toLong())
+        return valuePerDay(completions, zone)
+            .filterKeys { !it.isBefore(start) && !it.isAfter(today) }
+            .values.sum()
     }
+
+    fun getWeeklyVolume(completions: List<DailyCompletion>, zone: ZoneId = ZoneId.systemDefault()): Float =
+        windowVolume(completions, 7, zone)
+
+    fun getMonthlyVolume(completions: List<DailyCompletion>, zone: ZoneId = ZoneId.systemDefault()): Float =
+        windowVolume(completions, 30, zone)
+
+    fun getYearlyVolume(completions: List<DailyCompletion>, zone: ZoneId = ZoneId.systemDefault()): Float =
+        windowVolume(completions, 365, zone)
 
     /**
-     * Calculates estimated monthly volume
+     * Average of the per-day totals over the last 30 days, counting only days that have data
+     * (0 if none) — a "typical active day", not diluted by untracked days.
      */
-    fun getMonthlyVolume(habit: HabitEntity): Float {
-        val avgDaily = getAverageDailyVolume(habit)
-        return avgDaily * 30f
+    fun getAverageDailyVolume(completions: List<DailyCompletion>, zone: ZoneId = ZoneId.systemDefault()): Float {
+        val today = LocalDate.now(zone)
+        val start = today.minusDays(29)
+        val inWindow = valuePerDay(completions, zone)
+            .filterKeys { !it.isBefore(start) && !it.isAfter(today) }
+        return if (inWindow.isEmpty()) 0f else inWindow.values.sum() / inWindow.size
     }
 
-    /**
-     * Calculates estimated yearly volume
-     */
-    fun getYearlyVolume(habit: HabitEntity): Float {
-        val avgDaily = getAverageDailyVolume(habit)
-        return avgDaily * 365f
-    }
-
-    /**
-     * Calculates average daily volume based on completions
-     */
-    fun getAverageDailyVolume(habit: HabitEntity): Float {
-        return if (habit.totalCompletions > 0) {
-            habit.currentValue / (habit.totalCompletions / 30f)
-        } else {
-            habit.currentValue
-        }
-    }
-
-    /**
-     * Gets personal record (highest value ever achieved)
-     */
-    fun getPersonalRecord(habit: HabitEntity): Float {
-        return habit.personalRecord
-    }
-
-    /**
-     * Checks if a timestamp is today
-     */
-    private fun isDateToday(timestamp: Long): Boolean {
-        val cal = Calendar.getInstance()
-        val today = cal.apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-
-        val givenCal = Calendar.getInstance().apply {
-            timeInMillis = timestamp
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-
-        return today.timeInMillis == givenCal.timeInMillis
-    }
+    /** Highest value ever achieved — tracked on the habit itself. */
+    fun getPersonalRecord(habit: HabitEntity): Float = habit.personalRecord
 
     /**
      * Formats volume for display with unit

@@ -12,7 +12,7 @@ Fable 5 excels at long-context reasoning and multi-step execution. Give it rich 
 - **Build**: `app/build.gradle.kts`, kapt for Room annotation processing
 - **SDK**: minSdk 26, compileSdk 36, targetSdk 35
 - **Package**: `com.example.habtrack`
-- **Room DB version**: 4 (any schema change requires a real `Migration`, NOT just `fallbackToDestructiveMigration`)
+- **Room DB version**: 5 (any schema change requires a real `Migration`, NOT just `fallbackToDestructiveMigration`)
 
 ---
 
@@ -38,7 +38,7 @@ Fable 5 excels at long-context reasoning and multi-step execution. Give it rich 
 
 ## Architecture rules — do not violate
 
-- **Room migrations**: DB is version 4. Any new column requires `ALTER TABLE` SQL in a `Migration(N, N+1)` object added via `.addMigrations(...)` before `.fallbackToDestructiveMigration()`. Skipping this wipes all user data on upgrade.
+- **Room migrations**: DB is version 5. Any new column requires `ALTER TABLE` SQL in a `Migration(N, N+1)` object added via `.addMigrations(...)` before `.fallbackToDestructiveMigration()`. Skipping this wipes all user data on upgrade.
 - **Health Connect is always try/catch**: `HealthConnectClient.getSdkStatus()` and `getOrCreate()` can throw on some OEM ROMs. Every call site wraps them. Health Connect sync runs at app start in `LaunchedEffect(Unit)` inside `HabTrackApp` — a crash here crashes the app before the user sees anything.
 - **AI calls are user-triggered only**: `HabitInsightsService.generateInsights()` is called only when the user taps "Generate Insights" in `AnalyticsScreen`. Never call it automatically or on app start — it costs API credits.
 - **Health Connect sync = LaunchedEffect, not WorkManager**: HC reads are on-device and immediate; WorkManager is reserved for background work that must survive process death (midnight reset, reminders).

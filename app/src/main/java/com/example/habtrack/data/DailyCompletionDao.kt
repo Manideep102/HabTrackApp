@@ -43,4 +43,7 @@ interface DailyCompletionDao {
 
     @Query("SELECT * FROM daily_completions ORDER BY dateTime DESC LIMIT :limit")
     fun getRecentCompletions(limit: Int = 365): Flow<List<DailyCompletion>>
+
+    @Query("SELECT * FROM daily_completions WHERE dateTime >= :startDate")
+    fun getCompletionsSince(startDate: Long): Flow<List<DailyCompletion>>
 }
